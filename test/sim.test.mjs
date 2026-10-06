@@ -356,6 +356,28 @@ test('cost: HA costs more than one server', () => {
   assert.ok(b.metrics.cost > a.metrics.cost);
 });
 
+test('AWS Budgets: the spike pushes the forecast over budget, then it re-arms', () => {
+  const s = sim('ha', { budget: 1000 });
+  s.run(3);
+  const alerts = () => s.events.filter((e) => e.type === 'budgetWarn' || e.type === 'budgetOver');
+  assert.equal(alerts().length, 0, 'no alert at normal traffic');
+  const l = runScenario(s, 'spike');
+  assert.ok(s.events.some((e) => e.type === 'budgetOver'), 'over-budget alert during the spike');
+  assert.ok(l.points.some((p) => p.kind === 'good' && p.text.includes('AWS Budgets')), 'lesson credits the budget alert');
+  for (let k = 0; k < 400 && !s.events.some((e) => e.type === 'budgetOk'); k++) s.run(0.1);
+  assert.ok(s.events.some((e) => e.type === 'budgetOk'), 'forecast back under budget once the crowd is gone');
+});
+
+test('AWS Budgets: a budget below the running cost alerts right away; without one the spike lesson suggests it', () => {
+  const s = sim('ha', { budget: 200 });
+  s.run(1);
+  assert.ok(s.events.some((e) => e.type === 'budgetOver'), 'HA costs more than $200/month');
+  const t = sim('ha');
+  t.run(2);
+  const l = runScenario(t, 'spike');
+  assert.ok(l.suggestions.some((x) => x.patch.budget), 'should suggest setting a budget');
+});
+
 if (failures) {
   console.log(`\n${failures} test(s) failed`);
   process.exit(1);

@@ -28,6 +28,18 @@ export function Spark({ history, width = 168, height = 40 }) {
   );
 }
 
+// AWS Budgets: this month's forecast as a share of the budget
+function BudgetStat({ budget }) {
+  const ratio = budget.forecast / budget.amount;
+  const amount = '$' + budget.amount.toLocaleString('vi-VN');
+  return (
+    <div className={`stat ${ratio >= 1 ? 'is-bad' : ratio >= 0.8 ? 'is-warn' : ''}`} title={`AWS Budgets: chi phí dự báo tháng này ≈ $${Math.round(budget.forecast).toLocaleString('vi-VN')} (nếu giữ mức chi hiện tại), ngân sách ${amount}/tháng.`}>
+      <small>Budget {amount}</small>
+      <b>{Math.round(ratio * 100)}%</b>
+    </div>
+  );
+}
+
 export function MetricsBar() {
   const snap = useSim((s) => s.snap);
   const config = useSim((s) => s.config);
@@ -85,6 +97,7 @@ export function MetricsBar() {
           <em>/giờ</em>
         </b>
       </div>
+      {snap.budget && <BudgetStat budget={snap.budget} />}
     </div>
   );
 }

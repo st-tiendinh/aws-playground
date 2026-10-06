@@ -1,6 +1,6 @@
 // Turns a finished scenario into a lesson card: a verdict, what helped, what hurt and
 // one-click suggestions that patch the architecture so the user can try again.
-import { ASG, AZ_LABEL, LAMBDA, OTHER_AZ } from './constants.js';
+import { ASG, AZ_LABEL, BUDGET, LAMBDA, OTHER_AZ } from './constants.js';
 
 export const ACTION_TITLE = {
   quake: 'Động đất phá huỷ một AZ',
@@ -17,6 +17,7 @@ const pct = (x) => {
   return (v >= 99 && v < 100 ? v.toFixed(1) : Math.round(v)) + '%';
 };
 const money = (x) => '$' + (x < 1 ? x.toFixed(3) : x.toFixed(2));
+const usd = (x) => '$' + Math.round(x).toLocaleString('vi-VN');
 
 export function evaluateLesson(sc) {
   const cfg = sc.cfg;
@@ -192,6 +193,18 @@ export function evaluateLesson(sc) {
       }
       if (ec2 && cfg.nat !== 'none') info('NAT Gateway tính phí theo từng GB dữ liệu đi qua: lượng truy cập tăng thì phí NAT cũng tăng theo.');
       info(`Chi phí ước tính tăng từ ${money(sc.costStart)} lên ${money(sc.costMax)}/giờ lúc cao điểm.`);
+      if (cfg.budget) {
+        if (flags.has('budgetWarn') || flags.has('budgetOver')) {
+          good(`AWS Budgets gửi cảnh báo ngay khi chi phí dự báo vượt ngưỡng của ngân sách ${usd(cfg.budget)}/tháng — bạn biết trong ngày, không phải đợi hoá đơn cuối tháng.`);
+        } else if (sc.budgetAlertedStart > 0) {
+          info(`Chi phí dự báo đã vượt ngưỡng ngân sách ${usd(cfg.budget)}/tháng từ trước sự kiện — nên xem lại ngân sách hoặc tối ưu kiến trúc.`);
+        } else {
+          info(`Chi phí dự báo vẫn nằm trong ngân sách ${usd(cfg.budget)}/tháng nên AWS Budgets không phải báo động.`);
+        }
+      } else if (sc.costMax * BUDGET.hoursPerMonth > BUDGET.options[1]) {
+        info(`Nếu giữ mức chi lúc cao điểm suốt một tháng, hoá đơn có thể lên tới ~${usd(sc.costMax * BUDGET.hoursPerMonth)}. Đặt AWS Budgets để được cảnh báo sớm.`);
+        suggest(`Đặt AWS Budgets ${usd(BUDGET.options[1])}/tháng`, { budget: BUDGET.options[1] });
+      }
       break;
     }
 

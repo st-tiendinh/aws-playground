@@ -63,6 +63,9 @@ export const R53 = { costPerHour: 0.0007, queryRatio: 0.01, costPerMillion: 0.4 
 // share of dynamic requests that call an outside API (payment, email…) and so need a way out
 // to the Internet; servers in a private subnet only have one through a NAT Gateway
 export const NAT = { outboundShare: 0.15, kbPerCall: 10, costPerHour: 0.059, costPerGB: 0.059 };
+// AWS Budgets: monthly budget choices ($), forecast = smoothed current run-rate × hours in a
+// month; alerts at 80% and 100% of the budget, re-armed once the forecast falls below 70%
+export const BUDGET = { options: [200, 1000, 5000], warnAt: 0.8, rearmAt: 0.7, smoothing: 3, hoursPerMonth: 730 };
 
 // how long each scenario is watched before the lesson card appears (simulated seconds)
 export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26 };

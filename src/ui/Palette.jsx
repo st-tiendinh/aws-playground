@@ -1,7 +1,7 @@
 // Sandbox, left panel: ready-made architectures and the component toggles. Hovering a row
 // highlights the matching 3D model; warnings explain weak spots of the current design.
 import { CATEGORIES, serviceById } from '../data/services.js';
-import { EC2, ASG } from '../sim/constants.js';
+import { EC2, ASG, BUDGET } from '../sim/constants.js';
 import { PRESETS } from '../sim/presets.js';
 import { useApp, useSim } from '../state/store.js';
 import { Icon, ServiceIcon } from './icons.jsx';
@@ -80,6 +80,7 @@ function warnings(c) {
   if (c.compute === 'lambda' && c.database === 'none') w.push('Lambda không lưu dữ liệu lâu dài — thêm DynamoDB hoặc RDS.');
   if (!c.shield) w.push('Chưa bật AWS Shield: một đợt DDoS có thể chiếm hết công suất, chen cả người dùng thật ra ngoài.');
   if (c.database === 'rds' && !c.waf) w.push('Chưa bật AWS WAF: request chứa mã SQL độc hại có thể đi thẳng tới RDS.');
+  if (!c.budget) w.push('Chưa đặt AWS Budgets: chi phí tăng vọt (ví dụ khi 1 triệu người ùa vào) chỉ lộ ra khi nhận hoá đơn.');
   return w;
 }
 
@@ -234,6 +235,18 @@ export function Palette() {
           <Toggle on={c.cache} onChange={(v) => set({ cache: v })} label="ElastiCache" />
         </Row>
       )}
+
+      <h3 className="group-title" style={{ '--c': CATEGORIES.management.color }}>
+        Chi phí
+      </h3>
+      <Row id="budgets" sid="budgets" title="AWS Budgets" desc="báo động khi chi phí dự báo vượt ngân sách" />
+      <div className="seg four" role="radiogroup" aria-label="Ngân sách AWS Budgets mỗi tháng">
+        {[0, ...BUDGET.options].map((v) => (
+          <button key={v} role="radio" aria-checked={c.budget === v} className={c.budget === v ? 'is-on' : ''} onClick={() => set({ budget: v })} onMouseEnter={() => engine.sandbox.highlight('budgets')} onMouseLeave={() => engine.sandbox.highlight(null)}>
+            {v ? `$${v.toLocaleString('vi-VN')}` : 'Tắt'}
+          </button>
+        ))}
+      </div>
 
       {warn.length > 0 && (
         <div className="warnings">

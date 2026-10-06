@@ -192,14 +192,15 @@ export function createEngine({ host, ui, simStore }) {
     applyPreset(id) {
       const p = presetById(id);
       pendingReplay = null;
-      sim.reset(p.config);
+      // the budget belongs to the account, not to the architecture: keep it
+      sim.reset({ ...p.config, budget: sim.config.budget });
       sandbox.rebuild();
       simStore.set({ presetId: id, lesson: null, lessonOpen: false, events: [] });
       pushSim(true);
     },
     applyConfig(config) {
       pendingReplay = null;
-      sim.reset(config);
+      sim.reset({ budget: sim.config.budget, ...config });
       sandbox.rebuild();
       simStore.set({ presetId: null, lesson: null, lessonOpen: false, events: [] });
       pushSim(true);

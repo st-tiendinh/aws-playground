@@ -42,6 +42,9 @@ function live(p, snap, config) {
   } else if (p.kind === 'external') {
     rows.push(['Lời gọi ra ngoài', `${Math.round(snap.outbound.rps)} /giây`]);
     if (snap.outbound.failing > 0.01) rows.push(['Không tới được', `${Math.round(snap.outbound.failing)} /giây`]);
+  } else if (p.kind === 'budgets' && snap.budget) {
+    const { amount, forecast } = snap.budget;
+    rows.push(['Ngân sách', `$${amount.toLocaleString('vi-VN')}/tháng`], ['Chi phí dự báo', `$${Math.round(forecast).toLocaleString('vi-VN')}/tháng (${Math.round((forecast / amount) * 100)}%)`], ['Ngưỡng cảnh báo', '80% và 100%']);
   } else if (p.kind === 'asg') {
     rows.push(['Tối thiểu / tối đa', `${config.asgMin} / ${config.asgMax}`], ['Mong muốn (desired)', String(snap.asgDesired)], ['CPU trung bình', fmtPct(snap.instances.avgCpu)]);
   }

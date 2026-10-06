@@ -8,8 +8,9 @@ import { createModel } from './models/index.js';
 import { COLOR } from './palette.js';
 
 const PERSISTENT = new Set(['state', 'show', 'hide', 'ghost', 'label', 'load', 'count', 'break', 'fix', 'quake']);
-// models whose "count" (people, Lambda environments, queued messages, ECS tasks) starts at zero
-const COUNTED = new Set(['users', 'lambda', 'sqs', 'ecs']);
+// models whose "count" (people, Lambda environments, queued messages, ECS tasks, stack
+// resources, the running Step Functions state) starts at zero
+const COUNTED = new Set(['users', 'lambda', 'sqs', 'ecs', 'cloudformation', 'stepfunctions']);
 
 const v3 = (a) => (a ? new THREE.Vector3(a[0], a[1] ?? 0, a[2] ?? 0) : null);
 
@@ -329,7 +330,7 @@ export class ExploreScene {
           onArrive: () => {
             if (a.pulse !== false) {
               const m = this.nodes.get(a.to);
-              if (m && m.pulse) m.pulse();
+              if (m && m.pulse) m.pulse(a);
               if (m && m.flash !== undefined && m.kind === 'apigw') m.flash = 1;
             }
             if (a.then) this._schedule(a.then);

@@ -28,6 +28,8 @@ export const LAYOUT = {
   rdsX: 17.7,
   natX: 1.8,
   external: [-15, 0, -20],
+  // account-level, outside the Region: AWS Budgets
+  budgets: [-27, 0, 11],
   // subnet tiles inside each AZ strip: [public (NAT) | app servers | data]
   tiles: { pub: { x: 1.8, w: 3.0 }, app: { x: 9.05, w: 10.9 }, data: { x: 17.7, w: 5.6 } },
   asg: { x: 9.05, z: 0, w: 11.4, d: 26.4 },
@@ -61,6 +63,7 @@ const TITLES = {
   cache: ['ElastiCache', 'in-memory'],
   waf: ['AWS WAF', 'lọc request'],
   shield: ['AWS Shield', 'chống DDoS'],
+  budgets: ['AWS Budgets', ''],
 };
 
 const pickWeighted = (list) => {
@@ -211,6 +214,7 @@ export class SandboxScene {
     this._ensure('cache', c.database === 'rds' && c.cache, () => createModel('cache', { id: 'cache', position: L.cache }));
     this._ensure('waf', c.waf, () => createModel('waf', { id: 'waf', position: L.waf }));
     this._ensure('shield', c.shield, () => createModel('shield', { id: 'shield', position: L.shield }));
+    this._ensure('budgets', c.budget > 0, () => createModel('budgets', { id: 'budgets', position: L.budgets }));
     this._ensure('asg', ec2 && c.asg, () => {
       const m = createModel('outline', { id: 'asg', kind: 'asg', category: 'compute', w: L.asg.w, d: L.asg.d, r: 1.2, color: CAT_COLOR.compute, fill: 0.07, speed: 0.6, thick: 0.16, position: [L.asg.x, AZ_Y + 0.02, L.asg.z] });
       m.setLabel('Auto Scaling Group', '', { color: CAT_COLOR.compute, y: 0.4 });
@@ -331,6 +335,13 @@ export class SandboxScene {
     if (shield) {
       shield.setLabelSub(f.ddosBlocked > 1 ? `chặn ${Math.round(f.ddosBlocked).toLocaleString('vi-VN')} req/s DDoS` : 'đang giám sát');
       shield.setLabelState(f.ddosBlocked > 1 ? 'warn' : null);
+    }
+    const budget = this.node('budgets');
+    if (budget && sim.config.budget) {
+      const ratio = sim.budget.forecast / sim.config.budget;
+      budget.setLevel(ratio);
+      budget.setLabelSub(`$${sim.config.budget.toLocaleString('vi-VN')}/tháng · dự báo ${Math.round(ratio * 100)}%`);
+      budget.setLabelState(ratio >= 1 ? 'bad' : ratio >= 0.8 ? 'warn' : null);
     }
     const elb = this.node('elb');
     if (elb) {
@@ -702,6 +713,24 @@ export class SandboxScene {
       case 'sqlInjectionEnd':
         this.sfx?.play('good');
         break;
+      case 'budgetWarn':
+      case 'budgetOver': {
+        // an alert can fire on the very step the budget was set, before the gauge was built
+        if (!this.node('budgets')) this._sync();
+        const m = this.node('budgets');
+        const a = pos('budgets');
+        if (m && a) {
+          m.flash('deny');
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.4, a.z), e.type === 'budgetOver' ? 'Vượt ngân sách! ✉ đã báo' : '80% ngân sách · ✉ đã báo', { kind: e.type === 'budgetOver' ? 'bad' : 'warn', dur: 3 });
+        }
+        this.sfx?.play('alert');
+        break;
+      }
+      case 'budgetOk': {
+        const m = this.node('budgets');
+        if (m) m.flash('allow');
+        break;
+      }
       case 'siteDown':
         this.sfx?.play('alarm');
         break;
@@ -764,6 +793,8 @@ export class SandboxScene {
       cache: [L.cache, 11],
       waf: [L.waf, 11],
       shield: [L.shield, 11],
+      // aimed a little above the ground so the tall gauge and its label stay in view
+      budgets: [[L.budgets[0], 1.2, L.budgets[2]], 14],
       asg: [[L.asg.x, 0, L.asg.z], 30],
       nat: [[L.natX, 0, 0], 26],
       external: [L.external, 14],

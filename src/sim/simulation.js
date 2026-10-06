@@ -9,6 +9,7 @@ import {
   AZ_CODE,
   AZ_IDS,
   AZ_LABEL,
+  BUDGET,
   CACHE,
   CF,
   DDB,
@@ -52,6 +53,7 @@ export const DEFAULT_CONFIG = {
   cache: false, // ElastiCache in front of RDS
   waf: false, // AWS WAF: app-layer rules (blocks SQL injection, rate-based rules)
   shield: false, // AWS Shield: dedicated network-layer DDoS defence
+  budget: 0, // AWS Budgets: monthly budget in $ (0 = none), alerts on the forecast
 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -77,6 +79,7 @@ export function normalizeConfig(c = {}) {
   for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz', 'cache', 'waf', 'shield']) out[k] = !!out[k];
   for (const az of AZ_IDS) out.ec2[az] = clamp(Math.round(out.ec2[az] || 0), 0, EC2.maxPerAz);
   if (out.compute === 'ec2' && !out.asg && out.ec2.a + out.ec2.b === 0) out.ec2.a = 1;
+  out.budget = BUDGET.options.includes(Number(out.budget)) ? Number(out.budget) : 0;
   out.asgMin = clamp(Math.round(out.asgMin || 1), 1, ASG.limit);
   out.asgMax = clamp(Math.round(out.asgMax || 1), out.asgMin, ASG.limit);
   if (out.compute === 'lambda') {
@@ -107,6 +110,7 @@ const NAMES = {
 };
 
 const instName = (i) => `EC2 #${i.n}`;
+const usd = (x) => '$' + Math.round(x).toLocaleString('vi-VN');
 const listNames = (arr) => arr.map(instName).join(', ');
 
 export class Simulation {
@@ -154,6 +158,7 @@ export class Simulation {
     }
     const next = normalizeConfig(merged);
     this.config = next;
+    if (prev.budget !== next.budget) this.budget.alerted = 0;
     if (this.scenario) this.scenario.cfgChanged = true;
     this._apply(prev, {});
     this._announceConfig(prev, next);
@@ -227,6 +232,7 @@ export class Simulation {
       totals: { ...this.totals },
       cfHit: this.flows.cfHit,
       cacheHit: this.flows.cacheHit,
+      budget: this.config.budget ? { amount: this.config.budget, forecast: this.budget.forecast } : null,
       ddosRps: this.flows.ddosRps,
       ddosBlocked: this.flows.ddosBlocked,
       sqliFail: this.flows.sqliFail,
@@ -281,6 +287,7 @@ export class Simulation {
     this.scenario = null;
     this.lesson = null;
     this.totals = { ok: 0, fail: 0 };
+    this.budget = { forecast: 0, alerted: 0 }; // alerted: 0 none, 1 over 80%, 2 over 100%
     this._apply(null, { initial: true });
     this._route(STEP);
     this.lambda.warm = this.lambda.conc;
@@ -419,6 +426,15 @@ export class Simulation {
     }
     if (next.asg && (prev.asgMin !== next.asgMin || prev.asgMax !== next.asgMax)) {
       this._emit('config', 'info', `Auto Scaling: tối thiểu ${next.asgMin}, tối đa ${next.asgMax} EC2.`);
+    }
+    if (prev.budget !== next.budget) {
+      this._emit(
+        'config',
+        'info',
+        next.budget
+          ? `AWS Budgets: ngân sách ${usd(next.budget)}/tháng — gửi cảnh báo khi chi phí dự báo vượt 80% và 100%.`
+          : 'Đã gỡ AWS Budgets.',
+      );
     }
   }
 
@@ -1030,12 +1046,35 @@ export class Simulation {
     };
     m.costBreakdown = b;
     m.cost = Object.values(b).reduce((x, y) => x + y, 0);
+    this._budgets(dt);
 
     this._histClock += dt;
     if (this._histClock >= 0.5 - 1e-9 || !this.history.length) {
       this._histClock = 0;
       this.history.push({ t: this.t, success: m.success, latency: m.timeout ? null : m.latency, users: this.users, cost: m.cost });
       if (this.history.length > 120) this.history.shift();
+    }
+  }
+
+  // AWS Budgets: forecast this month's bill from the current (smoothed) run-rate and alert
+  // when it crosses 80% / 100% of the budget, like a forecasted-spend budget alert
+  _budgets(dt) {
+    const b = this.budget;
+    const monthly = this.metrics.cost * BUDGET.hoursPerMonth;
+    b.forecast = this.history.length ? b.forecast + (monthly - b.forecast) * (1 - Math.exp(-dt / BUDGET.smoothing)) : monthly;
+    const amount = this.config.budget;
+    // judged from the first step on, so an alert never comes before the architecture is up
+    if (!amount || this.t <= 0) return;
+    const ratio = b.forecast / amount;
+    if (ratio >= 1 && b.alerted < 2) {
+      b.alerted = 2;
+      this._emit('budgetOver', 'error', `AWS Budgets: chi phí dự báo ≈ ${usd(b.forecast)}/tháng VƯỢT ngân sách ${usd(amount)}! Đã gửi cảnh báo qua SNS — mở Cost Explorer xem khoản nào tăng.`);
+    } else if (ratio >= BUDGET.warnAt && b.alerted < 1) {
+      b.alerted = 1;
+      this._emit('budgetWarn', 'warn', `AWS Budgets: chi phí dự báo ≈ ${usd(b.forecast)}/tháng, đã vượt 80% ngân sách ${usd(amount)}. Email cảnh báo đã được gửi qua SNS.`);
+    } else if (ratio < BUDGET.rearmAt && b.alerted > 0) {
+      b.alerted = 0;
+      this._emit('budgetOk', 'success', `AWS Budgets: chi phí dự báo đã về ≈ ${usd(b.forecast)}/tháng, dưới ngân sách ${usd(amount)}.`);
     }
   }
 
@@ -1360,6 +1399,7 @@ export class Simulation {
       costStart: this.metrics.cost,
       costMax: this.metrics.cost,
       costMin: this.metrics.cost,
+      budgetAlertedStart: this.budget.alerted,
       dbMaxLoad: 0,
       edgeShareMax: 0,
       cacheHitMax: 0,

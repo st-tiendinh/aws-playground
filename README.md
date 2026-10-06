@@ -12,14 +12,14 @@ Chọn một dịch vụ ở cột trái để xem luồng hoạt động của 
 
 | Nhóm | Dịch vụ |
 | --- | --- |
-| Nền tảng | Region & Availability Zone |
+| Nền tảng | Region & Availability Zone, Mô hình trách nhiệm chung (Shared Responsibility) |
 | Tính toán | EC2, Auto Scaling, Lambda, ECS + Fargate |
-| Lưu trữ | S3 |
+| Lưu trữ | S3, EBS, EFS |
 | Cơ sở dữ liệu | RDS, DynamoDB, ElastiCache |
 | Mạng | Elastic Load Balancing, CloudFront, Route 53, VPC, NAT Gateway |
-| Tích hợp | API Gateway, SQS, SNS |
-| Giám sát | CloudWatch |
-| Bảo mật | IAM, Cognito, Secrets Manager, WAF, Shield |
+| Tích hợp | API Gateway, SQS, SNS, EventBridge, Step Functions |
+| Giám sát & quản trị | CloudWatch, CloudTrail, CloudFormation, Budgets & Cost Explorer |
+| Bảo mật | IAM, Cognito, KMS, Secrets Manager, ACM, WAF, Shield |
 
 Cột phải giải thích dịch vụ: là gì, ví dụ đời thường, khi nào dùng, khái niệm chính, cách tính tiền, và nút **Thử trong Sandbox**.
 
@@ -27,7 +27,7 @@ Phím tắt: `←` / `→` chuyển bước, `Space` chạy / tạm dừng.
 
 ### 2. Sandbox kiến trúc
 
-- Chọn mẫu kiến trúc (1 server, Web + Database, Chịu lỗi cao, Chịu lỗi + CDN, Serverless) hoặc tự bật/tắt từng thành phần: Route 53, CloudFront, Load Balancer, Auto Scaling, số EC2 mỗi AZ, vị trí EC2 (public / private subnet), NAT Gateway (không / 1 cái / mỗi AZ), S3, RDS (Single/Multi-AZ), ElastiCache (đặt trước RDS), DynamoDB, API Gateway + Lambda, AWS WAF, AWS Shield.
+- Chọn mẫu kiến trúc (1 server, Web + Database, Chịu lỗi cao, Chịu lỗi + CDN, Serverless) hoặc tự bật/tắt từng thành phần: Route 53, CloudFront, Load Balancer, Auto Scaling, số EC2 mỗi AZ, vị trí EC2 (public / private subnet), NAT Gateway (không / 1 cái / mỗi AZ), S3, RDS (Single/Multi-AZ), ElastiCache (đặt trước RDS), DynamoDB, API Gateway + Lambda, AWS WAF, AWS Shield, AWS Budgets (ngân sách $200 / $1.000 / $5.000 mỗi tháng — cảnh báo khi chi phí dự báo vượt 80% và 100%).
 - Thả sự kiện để xem điều gì xảy ra:
   - **Động đất**: phá huỷ AZ A hoặc AZ B (nứt nền, khói bụi, server đổ).
   - **Server hỏng**: một EC2 cháy nguồn.
@@ -37,7 +37,7 @@ Phím tắt: `←` / `→` chuyển bước, `Space` chạy / tạm dừng.
   - **SQL injection**: request chứa mã SQL độc hại nhắm vào database (cần có database).
   - **Đêm khuya**: chỉ còn 500 người, trời tối.
   - **Phục hồi**: sửa mọi thứ.
-- Theo dõi trạng thái website, request/giây, tỉ lệ thành công, độ trễ, số máy, chi phí ước tính, biểu đồ 60 giây và nhật ký giải thích bằng lời.
+- Theo dõi trạng thái website, request/giây, tỉ lệ thành công, độ trễ, số máy, chi phí ước tính (và % ngân sách khi bật AWS Budgets), biểu đồ 60 giây và nhật ký giải thích bằng lời.
 - Hết sự kiện sẽ có **thẻ bài học**: kết quả, điều gì giúp ích, điều gì gây hại, và gợi ý có thể **áp dụng & thử lại** ngay.
 - Bấm vào vật thể 3D bất kỳ để xem nó là gì và trạng thái hiện tại.
 
@@ -70,7 +70,7 @@ Thêm `?fx=low` vào URL để chạy chế độ đồ hoạ nhẹ (tắt bloom
 ```
 src/
   sim/            mô phỏng (JS thuần, test được bằng Node)
-    simulation.js   định tuyến traffic, health check, Auto Scaling, RDS failover, ElastiCache, Lambda, DDoS / SQL injection, chi phí
+    simulation.js   định tuyến traffic, health check, Auto Scaling, RDS failover, ElastiCache, Lambda, DDoS / SQL injection, chi phí, AWS Budgets
     lessons.js      chấm điểm sự kiện → thẻ bài học + gợi ý
     presets.js      các mẫu kiến trúc
     constants.js    công suất, thời gian, giá minh hoạ
