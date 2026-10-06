@@ -373,8 +373,8 @@ export function createEngine({ host, ui, simStore }) {
     } else if (mode === 'explore') {
       explore.update(dt);
     }
-    world.update(dt, t);
     rig.update(dt);
+    world.update(dt, t, camera, mode === 'sandbox' ? sandbox.bounds : explore.bounds);
     updateHover(dt);
     render();
     if (!document.body.dataset.ready) document.body.dataset.ready = '1';

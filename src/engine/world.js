@@ -1,6 +1,6 @@
 // Backdrop shared by every view: gradient sky dome with stars, a sea of clouds the
-// platforms float on (the "cloud" in cloud computing), drifting cloud clusters, sun/moon
-// lighting and a day ⇄ night blend.
+// platforms float on (the "cloud" in cloud computing), drifting cloud clusters that melt
+// away rather than cover the scene, sun/moon lighting and a day ⇄ night blend.
 import * as THREE from 'three';
 
 const SKY_VS = /* glsl */ `
@@ -133,15 +133,19 @@ export class World {
         puffs.push({ x: cx + rand(-w / 2, w / 2), y: rand(-3.8, -2.4), z: cz + rand(-d / 2, d / 2), s: rand(2.2, 4.2), drift: 0 });
       }
     }
-    // drifting clusters in the sky
+    // drifting clusters in the sky; vis 1 → 0 melts one away when it gets in the camera's way
     this.clusters = [];
     for (let k = 0; k < 9; k++) {
       const a = (k / 9) * Math.PI * 2 + rand(-0.2, 0.2);
       const r = rand(48, 85);
-      const c = { x: Math.cos(a) * r, y: rand(10, 26), z: Math.sin(a) * r * 0.8, v: rand(0.4, 1.0), start: puffs.length };
+      const c = { x: Math.cos(a) * r, y: rand(10, 26), z: Math.sin(a) * r * 0.8, v: rand(0.4, 1.0), vis: 1, r: 0 };
       const n = 5 + Math.floor(Math.random() * 4);
-      for (let i = 0; i < n; i++) puffs.push({ ox: rand(-4, 4), oy: rand(-0.6, 1.4), oz: rand(-2, 2), s: rand(1.6, 3.2), cluster: c });
-      c.end = puffs.length;
+      for (let i = 0; i < n; i++) {
+        const p = { ox: rand(-4, 4), oy: rand(-0.6, 1.4), oz: rand(-2, 2), s: rand(1.6, 3.2), lag: rand(0, 0.4), cluster: c };
+        // bounding sphere around (x, y, z)
+        c.r = Math.max(c.r, Math.hypot(p.ox, p.oy, p.oz) + p.s);
+        puffs.push(p);
+      }
       this.clusters.push(c);
     }
     const mesh = new THREE.InstancedMesh(puffGeo, mat, puffs.length);
@@ -153,32 +157,101 @@ export class World {
     this._p = new THREE.Vector3();
     this._q = new THREE.Quaternion();
     this._s = new THREE.Vector3();
+    this._v = new THREE.Vector3();
+    this._sphere = new THREE.Sphere();
+    this._frustum = new THREE.Frustum();
+    this._rect = { x0: 0, y0: 0, x1: 0, y1: 0, far: 0 };
     puffs.forEach((p, i) => this._writePuff(p, i, 0));
     this.scene.add(mesh);
   }
 
   _writePuff(p, i, t) {
+    let s = p.s;
     if (p.cluster) {
       const c = p.cluster;
       this._p.set(c.x + p.ox, c.y + p.oy, c.z + p.oz);
+      // a melting cluster's puffs shrink away one after another
+      s *= Math.max(1e-3, THREE.MathUtils.smoothstep(c.vis - p.lag, 0, 0.6));
     } else {
       this._p.set(p.x + Math.sin(t * 0.05 + i) * 0.4, p.y + Math.sin(t * 0.3 + i * 1.7) * 0.15, p.z);
     }
-    this._s.set(p.s, p.s * 0.62, p.s);
+    this._s.set(s, s * 0.62, s);
     this._m.compose(this._p, this._q, this._s);
     this.cloudMesh.setMatrixAt(i, this._m);
+  }
+
+  // the clusters must never hide the scene being shown (focus): one that would sit between
+  // the camera and it on screen melts away, and forms again once it has drifted clear
+  _clearView(dt, camera, focus) {
+    const rect = camera && focus && !focus.isEmpty() ? this._screenRect(camera, focus) : null;
+    const sphere = this._sphere;
+    for (const c of this.clusters) {
+      let block = false;
+      // wider margin while melted so it does not flicker on the edge
+      const r = c.r * (c.vis < 1 ? 1.3 : 1.05);
+      sphere.center.set(c.x, c.y, c.z);
+      sphere.radius = r;
+      if (rect && this._frustum.intersectsSphere(sphere)) {
+        const v = this._v.copy(sphere.center).applyMatrix4(camera.matrixWorldInverse);
+        const depth = -v.z;
+        if (depth - r < rect.far) {
+          if (depth - r <= camera.near) block = true; // on screen and reaching the camera: it would fill the view
+          else {
+            const P = camera.projectionMatrix.elements;
+            const rx = (r * P[0]) / depth;
+            const ry = (r * P[5]) / depth;
+            v.applyMatrix4(camera.projectionMatrix);
+            block = v.x + rx > rect.x0 && v.x - rx < rect.x1 && v.y + ry > rect.y0 && v.y - ry < rect.y1;
+          }
+        }
+      }
+      c.vis = block ? Math.max(0, c.vis - dt * 3) : Math.min(1, c.vis + dt * 0.6);
+    }
+  }
+
+  // view frustum, plus the screen rectangle (NDC) and far depth of a box; the whole screen
+  // when the camera is inside the box
+  _screenRect(camera, box) {
+    camera.updateMatrixWorld();
+    this._m.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    this._frustum.setFromProjectionMatrix(this._m);
+    const r = this._rect;
+    r.x0 = r.y0 = Infinity;
+    r.x1 = r.y1 = -Infinity;
+    r.far = 0;
+    let inside = false;
+    for (let i = 0; i < 8; i++) {
+      const v = this._v.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z);
+      v.applyMatrix4(camera.matrixWorldInverse);
+      r.far = Math.max(r.far, -v.z);
+      if (-v.z <= camera.near) {
+        inside = true;
+        continue;
+      }
+      v.applyMatrix4(camera.projectionMatrix);
+      r.x0 = Math.min(r.x0, v.x);
+      r.x1 = Math.max(r.x1, v.x);
+      r.y0 = Math.min(r.y0, v.y);
+      r.y1 = Math.max(r.y1, v.y);
+    }
+    if (inside) {
+      r.x0 = r.y0 = -1;
+      r.x1 = r.y1 = 1;
+    }
+    return r.far > camera.near ? r : null;
   }
 
   setNight(v) {
     this.nightTarget = v ? 1 : 0;
   }
 
-  update(dt, t) {
+  update(dt, t, camera = null, focus = null) {
     // clusters drift slowly across the sky and wrap around
     for (const c of this.clusters) {
       c.x += c.v * dt;
       if (c.x > 110) c.x = -110;
     }
+    this._clearView(dt, camera, focus);
     for (let i = 0; i < this.puffs.length; i++) {
       const p = this.puffs[i];
       if (p.cluster || (i % 3 === Math.floor(t * 10) % 3)) this._writePuff(p, i, t);

@@ -35,6 +35,13 @@ export const LAYOUT = {
   asg: { x: 9.05, z: 0, w: 11.4, d: 26.4 },
 };
 
+// everything the sandbox can show, users island to data tier plus the packets arcing above:
+// the drifting sky clouds stay out of the way of this box
+const BOUNDS = new THREE.Box3(
+  new THREE.Vector3(LAYOUT.users[0] - 6.5, -0.5, LAYOUT.external[2] - 2.5),
+  new THREE.Vector3(LAYOUT.region.x + LAYOUT.region.w / 2 + 0.5, 8, LAYOUT.region.z + LAYOUT.region.d / 2 + 0.5),
+);
+
 export const HOME_VIEW = {
   target: new THREE.Vector3(-9.5, 0, 1.5),
   dir: new THREE.Vector3(-0.2, 0.66, 0.72).normalize(),
@@ -85,6 +92,7 @@ export class SandboxScene {
     this.rig = rig;
     this.root = new THREE.Group();
     this.root.name = 'sandbox';
+    this.bounds = BOUNDS;
     this.fx = new Fx(this.root);
     this.nodes = new Map();
     this.dying = new Set();

@@ -22,6 +22,8 @@ export class ExploreScene {
     this.onStep = onStep;
     this.root = new THREE.Group();
     this.root.name = 'explore';
+    // stage + every node of the flow, packets arcing above: the sky clouds stay out of its way
+    this.bounds = new THREE.Box3();
     this.fx = new Fx(this.root);
     this.nodes = new Map();
     this.defs = new Map();
@@ -55,7 +57,22 @@ export class ExploreScene {
       }
       this._put(n.id, m, n);
     }
+    this._measure();
     this.goto(0, { cameraInstant: true });
+  }
+
+  // footprint (w × d for zones, else the model radius) and height of every node, hidden ones too
+  _measure() {
+    const b = this.bounds.makeEmpty();
+    const p = new THREE.Vector3();
+    for (const m of this.nodes.values()) {
+      const { x, y, z } = m.group.position;
+      const s = m.group.scale.x;
+      const hw = ((m.opts.w ?? m.radius * 2) / 2) * s;
+      const hd = ((m.opts.d ?? m.radius * 2) / 2) * s;
+      b.expandByPoint(p.set(x - hw, y - 0.5, z - hd));
+      b.expandByPoint(p.set(x + hw, y + m.height * s + 3, z + hd));
+    }
   }
 
   _put(id, m, def) {
@@ -69,6 +86,7 @@ export class ExploreScene {
     this.fx.clear();
     for (const m of this.nodes.values()) m.dispose();
     this.nodes.clear();
+    this.bounds.makeEmpty();
     this.defs.clear();
     this.pending = [];
     this.flow = null;
