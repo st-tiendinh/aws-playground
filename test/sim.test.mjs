@@ -1,0 +1,314 @@
+// Scenario tests for the sandbox simulation: each architecture should react to the actions
+// the way the lesson cards claim. usage: node test/sim.test.mjs [-v]
+import assert from 'node:assert/strict';
+import { Simulation } from '../src/sim/simulation.js';
+import { presetById } from '../src/sim/presets.js';
+
+const verbose = process.argv.includes('-v');
+let failures = 0;
+
+function test(name, fn) {
+  try {
+    fn();
+    console.log(`ok   ${name}`);
+  } catch (e) {
+    failures++;
+    console.log(`FAIL ${name}\n     ${e.message}`);
+  }
+}
+
+const sim = (preset, extra = {}) => new Simulation({ ...presetById(preset).config, ...extra });
+
+// run until the scenario produced its lesson (or a time limit)
+function runScenario(s, action, opts) {
+  assert.ok(s.trigger(action, opts) !== false, `trigger ${action} refused`);
+  for (let k = 0; k < 600 && !s.lesson; k++) s.run(0.1);
+  assert.ok(s.lesson, `${action}: no lesson produced`);
+  if (verbose) {
+    const l = s.lesson;
+    console.log(`     [${action}] ${l.grade} — ${l.headline}`);
+    for (const st of l.stats) console.log(`       · ${st.label}: ${st.value}`);
+    for (const p of l.points) console.log(`       ${p.kind === 'good' ? '+' : p.kind === 'bad' ? '-' : 'i'} ${p.text}`);
+    for (const sg of l.suggestions) console.log(`       → ${sg.label} ${JSON.stringify(sg.patch)}`);
+  }
+  return s.lesson;
+}
+
+test('single server runs fine at normal traffic', () => {
+  const s = sim('single');
+  s.run(3);
+  assert.equal(s.metrics.status, 'ok');
+  assert.equal(s.instances.length, 1);
+  assert.ok(s.instances[0].cpu > 0.1 && s.instances[0].cpu < 0.5, `cpu ${s.instances[0].cpu}`);
+});
+
+test('single server: hardware failure takes the site down', () => {
+  const s = sim('single');
+  s.run(2);
+  const l = runScenario(s, 'serverFail');
+  assert.equal(l.grade, 'fail');
+  assert.ok(l.suggestions.some((x) => x.patch.elb), 'should suggest a load balancer');
+});
+
+test('single server: earthquake in AZ A = outage + data at risk', () => {
+  const s = sim('single');
+  s.run(2);
+  const l = runScenario(s, 'quake', { az: 'a' });
+  assert.equal(l.grade, 'fail');
+  assert.equal(s.metrics.status, 'down');
+  assert.ok(s.events.some((e) => e.type === 'dataLoss'));
+});
+
+test('single server: quake in the other AZ does nothing', () => {
+  const s = sim('single');
+  s.run(2);
+  const l = runScenario(s, 'quake', { az: 'b' });
+  assert.equal(l.grade, 'pass');
+});
+
+test('HA: losing AZ A — ELB shifts traffic, ASG rebuilds in AZ B, RDS fails over', () => {
+  const s = sim('ha');
+  s.run(3);
+  assert.equal(s.metrics.status, 'ok');
+  const l = runScenario(s, 'quake', { az: 'a' });
+  assert.notEqual(l.grade, 'fail');
+  assert.ok(s.events.some((e) => e.type === 'dbFailoverDone'), 'RDS should fail over');
+  s.run(10);
+  const active = s.instances.filter((i) => i.state === 'running');
+  assert.ok(active.length >= 2 && active.every((i) => i.az === 'b'), 'fleet rebuilt in AZ B');
+  assert.equal(s.metrics.status, 'ok');
+});
+
+test('HA: a broken server is replaced automatically', () => {
+  const s = sim('ha');
+  s.run(3);
+  const before = s.instances.map((i) => i.id);
+  const l = runScenario(s, 'serverFail');
+  assert.equal(l.grade, 'pass');
+  s.run(8);
+  const now = s.instances.filter((i) => i.state === 'running');
+  assert.equal(now.length, 2);
+  assert.ok(now.some((i) => !before.includes(i.id)), 'a replacement instance exists');
+});
+
+test('ELB + 2 fixed servers survive one failure but do not heal', () => {
+  const s = new Simulation({ elb: true, ec2: { a: 1, b: 1 } });
+  s.run(3);
+  const l = runScenario(s, 'serverFail');
+  assert.equal(l.grade, 'pass');
+  assert.equal(s.instances.filter((i) => i.state === 'failed').length, 1);
+});
+
+test('single server melts under 1M users', () => {
+  const s = sim('single');
+  s.run(2);
+  const l = runScenario(s, 'spike');
+  assert.equal(l.grade, 'fail');
+});
+
+test('HA scales out for 1M users, then back in', () => {
+  const s = sim('ha');
+  s.run(3);
+  const l = runScenario(s, 'spike');
+  assert.notEqual(l.grade, 'fail');
+  const sc = l.stats;
+  assert.ok(sc.length === 4);
+  s.run(25);
+  const running = s.instances.filter((i) => i.state === 'running' || i.state === 'pending').length;
+  assert.ok(running <= 3, `should scale back in, still ${running}`);
+});
+
+test('HA with pre-scaled minimum handles the spike cleanly', () => {
+  const s = sim('ha', { asgMin: 8 });
+  s.run(8);
+  const l = runScenario(s, 'spike');
+  assert.equal(l.grade, 'pass');
+});
+
+test('ASG without ELB: new servers sit idle', () => {
+  const s = new Simulation({ asg: true, s3: true });
+  s.run(3);
+  const l = runScenario(s, 'spike');
+  assert.equal(l.grade, 'fail');
+  assert.ok(l.suggestions.some((x) => x.patch.elb));
+});
+
+test('serverless shrugs off quake, server failure and the spike', () => {
+  for (const action of ['quake', 'serverFail', 'spike']) {
+    const s = sim('serverless');
+    s.run(3);
+    const l = runScenario(s, action, { az: 'a' });
+    assert.equal(l.grade, 'pass', `${action}: ${l.grade}`);
+  }
+});
+
+test('serverless without S3 hits the Lambda concurrency limit', () => {
+  const s = new Simulation({ compute: 'lambda', database: 'dynamodb' });
+  s.run(3);
+  const l = runScenario(s, 'spike');
+  assert.ok(s.events.some((e) => e.type === 'lambdaThrottle'));
+  assert.notEqual(l.grade, 'pass');
+});
+
+test('RDS single-AZ disk failure = long outage; Multi-AZ = short failover', () => {
+  const a = sim('classic');
+  a.run(2);
+  const la = runScenario(a, 'dbFail');
+  assert.equal(la.grade, 'fail');
+  assert.ok(la.suggestions.some((x) => x.patch.rdsMultiAz));
+
+  const b = sim('ha');
+  b.run(3);
+  const lb = runScenario(b, 'dbFail');
+  assert.equal(lb.grade, 'partial');
+  assert.ok(b.events.some((e) => e.type === 'dbFailoverDone'));
+});
+
+test('night: fixed fleet wastes money, serverless cost drops', () => {
+  const a = new Simulation({ elb: true, ec2: { a: 2, b: 2 } });
+  a.run(2);
+  assert.equal(runScenario(a, 'night').grade, 'partial');
+  const b = sim('serverless');
+  b.run(2);
+  const lb = runScenario(b, 'night');
+  assert.equal(lb.grade, 'pass');
+});
+
+test('repair restores AZ, servers and database', () => {
+  const s = sim('classic');
+  s.run(2);
+  s.trigger('quake', { az: 'a' });
+  s.run(5);
+  assert.equal(s.metrics.status, 'down');
+  s.trigger('repair');
+  s.run(10);
+  assert.equal(s.az.a, 'ok');
+  assert.equal(s.metrics.status, 'ok');
+  assert.ok(s.db.every((n) => n.state === 'ok'));
+});
+
+test('switching Auto Scaling off keeps the current fleet', () => {
+  const s = sim('ha');
+  s.run(3);
+  s.setConfig({ asg: false });
+  s.run(3);
+  assert.deepEqual(s.config.ec2, { a: 1, b: 1 });
+  assert.equal(s.instances.filter((i) => i.state === 'running').length, 2);
+});
+
+test('switching to Lambda retires EC2 and keeps serving', () => {
+  const s = sim('ha');
+  s.run(3);
+  s.setConfig({ compute: 'lambda', database: 'dynamodb' });
+  s.run(4);
+  assert.equal(s.instances.length, 0);
+  assert.equal(s.metrics.status, 'ok');
+});
+
+test('private fleet without NAT cannot call outside APIs', () => {
+  const s = sim('ha', { nat: 'none' });
+  s.run(3);
+  assert.equal(s.metrics.status, 'degraded');
+  assert.ok(Math.abs(s.metrics.successRaw - (1 - 0.4 * 0.15)) < 0.01, `success ${s.metrics.successRaw}`);
+  const l = runScenario(s, 'serverFail');
+  assert.ok(l.suggestions.some((x) => x.patch.nat === 'perAz'), 'should suggest NAT');
+});
+
+test('NAT per AZ: losing AZ A keeps the way out for AZ B', () => {
+  const s = sim('ha');
+  s.run(3);
+  assert.equal(s.nat.length, 2);
+  const l = runScenario(s, 'quake', { az: 'a' });
+  assert.notEqual(l.grade, 'fail');
+  s.run(10);
+  assert.equal(s.flows.outFailRps, 0);
+  assert.equal(s.metrics.status, 'ok');
+});
+
+test('single NAT in the lost AZ cuts outside calls for the survivors', () => {
+  const s = sim('ha', { nat: 'single' });
+  s.run(3);
+  assert.deepEqual(s.nat.map((n) => n.az), ['a']);
+  const l = runScenario(s, 'quake', { az: 'a' });
+  assert.equal(l.grade, 'partial');
+  assert.ok(l.suggestions.some((x) => x.patch.nat === 'perAz'));
+  assert.ok(s.flows.outFailRps > 0);
+  s.trigger('repair');
+  s.run(10);
+  assert.equal(s.flows.outFailRps, 0);
+  assert.equal(s.metrics.status, 'ok');
+});
+
+test('turning the load balancer off brings a private fleet back to a public subnet', () => {
+  const s = sim('ha');
+  s.run(2);
+  s.setConfig({ elb: false });
+  assert.equal(s.config.appSubnet, 'public');
+  assert.equal(s.config.nat, 'none');
+  assert.equal(s.nat.length, 0);
+});
+
+test('NAT gateways show up in the bill', () => {
+  const a = sim('ha');
+  const b = sim('ha', { appSubnet: 'public', nat: 'none' });
+  a.run(2);
+  b.run(2);
+  assert.ok(a.metrics.costBreakdown.nat > 0.1, `nat cost ${a.metrics.costBreakdown.nat}`);
+  assert.equal(b.metrics.costBreakdown.nat, 0);
+});
+
+test('repair during an RDS failover keeps exactly one primary and one standby', () => {
+  const s = sim('ha');
+  s.run(3);
+  s.trigger('dbFail');
+  s.run(2);
+  assert.ok(s.db.some((n) => n.state === 'promoting'));
+  s.trigger('repair');
+  s.run(15);
+  assert.deepEqual(s.db.map((n) => n.role).sort(), ['primary', 'standby']);
+  s.setConfig({ s3: false });
+  s.run(3);
+  assert.equal(new Set(s.db.map((n) => n.id)).size, s.db.length, 'no duplicate database ids');
+  assert.equal(s.db.length, 2);
+});
+
+test('a database waiting for a new host stays down once its AZ is destroyed', () => {
+  const s = new Simulation({ elb: true, ec2: { a: 1, b: 1 }, database: 'rds' });
+  s.run(2);
+  s.trigger('dbFail');
+  s.run(1);
+  s.trigger('quake', { az: 'a' });
+  s.run(30);
+  assert.ok(s.db.every((n) => n.state === 'failed'));
+  assert.notEqual(s.metrics.status, 'ok');
+});
+
+test('rebalancing after a repair goes at most one instance over the maximum', () => {
+  const s = sim('ha');
+  s.run(3);
+  s.trigger('quake', { az: 'a' });
+  s.setUsers(1_000_000);
+  s.run(20);
+  s.trigger('repair');
+  s.setUsers(1_000_000);
+  let peak = 0;
+  for (let k = 0; k < 300; k++) {
+    s.run(0.1);
+    peak = Math.max(peak, s.instances.filter((i) => i.state === 'pending' || i.state === 'running').length);
+  }
+  assert.ok(peak <= s.config.asgMax + 1, `peak ${peak}`);
+});
+
+test('cost: HA costs more than one server', () => {
+  const a = sim('single');
+  const b = sim('ha');
+  a.run(2);
+  b.run(2);
+  assert.ok(b.metrics.cost > a.metrics.cost);
+});
+
+if (failures) {
+  console.log(`\n${failures} test(s) failed`);
+  process.exit(1);
+}
+console.log('\nall simulation tests passed');

@@ -1,0 +1,65 @@
+// Ready-made architectures for the sandbox, from "one server" to "serverless".
+export const PRESETS = [
+  {
+    id: 'single',
+    name: '1 server',
+    level: 'Khởi đầu',
+    desc: 'Một EC2 duy nhất làm mọi việc: web, file tĩnh, lưu dữ liệu.',
+    config: { compute: 'ec2', ec2: { a: 1, b: 0 } },
+  },
+  {
+    id: 'classic',
+    name: 'Web + Database',
+    level: 'Cơ bản',
+    desc: 'EC2 chạy web, RDS lưu dữ liệu — cả hai cùng nằm ở AZ A.',
+    config: { compute: 'ec2', ec2: { a: 1, b: 0 }, database: 'rds' },
+  },
+  {
+    id: 'ha',
+    name: 'Chịu lỗi cao',
+    level: 'Khuyên dùng',
+    desc: 'ELB + Auto Scaling trải 2 AZ, EC2 trong private subnet + NAT mỗi AZ, RDS Multi-AZ, file tĩnh trên S3.',
+    config: {
+      compute: 'ec2',
+      route53: true,
+      elb: true,
+      asg: true,
+      asgMin: 2,
+      asgMax: 10,
+      appSubnet: 'private',
+      nat: 'perAz',
+      s3: true,
+      database: 'rds',
+      rdsMultiAz: true,
+    },
+  },
+  {
+    id: 'ha-cdn',
+    name: 'Chịu lỗi + CDN',
+    level: 'Nâng cao',
+    desc: 'Như "Chịu lỗi cao" và thêm CloudFront để cache file gần người dùng.',
+    config: {
+      compute: 'ec2',
+      route53: true,
+      cloudfront: true,
+      elb: true,
+      asg: true,
+      asgMin: 2,
+      asgMax: 10,
+      appSubnet: 'private',
+      nat: 'perAz',
+      s3: true,
+      database: 'rds',
+      rdsMultiAz: true,
+    },
+  },
+  {
+    id: 'serverless',
+    name: 'Serverless',
+    level: 'Hiện đại',
+    desc: 'API Gateway + Lambda + DynamoDB, file tĩnh qua S3 + CloudFront.',
+    config: { compute: 'lambda', route53: true, cloudfront: true, s3: true, database: 'dynamodb' },
+  },
+];
+
+export const presetById = (id) => PRESETS.find((p) => p.id === id) || PRESETS[0];
