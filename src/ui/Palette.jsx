@@ -75,8 +75,11 @@ function warnings(c) {
   if (ec2 && c.appSubnet === 'private' && c.nat === 'none') w.push('EC2 ở private subnet nhưng chưa có NAT Gateway: không gọi được API bên ngoài (thanh toán, email…).');
   if (ec2 && c.appSubnet === 'private' && c.nat === 'single') w.push('Chỉ có 1 NAT Gateway (ở AZ A): AZ A sập thì EC2 ở AZ B cũng mất đường ra Internet.');
   if (c.database === 'rds' && !c.rdsMultiAz) w.push('RDS Single-AZ: database hỏng là cả website lỗi theo.');
+  if (c.database === 'rds' && !c.cache) w.push('Chưa bật ElastiCache: mọi lượt đọc đều dồn thẳng vào RDS, dễ nghẽn khi tải tăng.');
   if (!c.s3) w.push(c.compute === 'lambda' ? 'File tĩnh đang chạy qua Lambda — nên đặt trên S3.' : 'File tĩnh (ảnh, CSS, JS) đang do server phục vụ — đưa lên S3 để server nhẹ hơn.');
   if (c.compute === 'lambda' && c.database === 'none') w.push('Lambda không lưu dữ liệu lâu dài — thêm DynamoDB hoặc RDS.');
+  if (!c.shield) w.push('Chưa bật AWS Shield: một đợt DDoS có thể chiếm hết công suất, chen cả người dùng thật ra ngoài.');
+  if (c.database === 'rds' && !c.waf) w.push('Chưa bật AWS WAF: request chứa mã SQL độc hại có thể đi thẳng tới RDS.');
   return w;
 }
 
@@ -113,6 +116,16 @@ export function Palette() {
       </Row>
       <Row id="cloudfront" title="CloudFront" desc="CDN: cache file gần người dùng">
         <Toggle on={c.cloudfront} onChange={(v) => set({ cloudfront: v })} label="CloudFront" />
+      </Row>
+
+      <h3 className="group-title" style={{ '--c': CATEGORIES.security.color }}>
+        Bảo mật
+      </h3>
+      <Row id="waf" sid="waf" title="AWS WAF" desc="lọc request độc hại (SQL injection…)">
+        <Toggle on={c.waf} onChange={(v) => set({ waf: v })} label="AWS WAF" />
+      </Row>
+      <Row id="shield" sid="shield" title="AWS Shield" desc="chặn tấn công DDoS ở tầng mạng">
+        <Toggle on={c.shield} onChange={(v) => set({ shield: v })} label="AWS Shield" />
       </Row>
 
       <h3 className="group-title" style={{ '--c': CATEGORIES.compute.color }}>
@@ -214,6 +227,11 @@ export function Palette() {
       {c.database === 'rds' && (
         <Row id="rds" title="Multi-AZ" desc="bản standby ở AZ khác">
           <Toggle on={c.rdsMultiAz} onChange={(v) => set({ rdsMultiAz: v })} label="RDS Multi-AZ" />
+        </Row>
+      )}
+      {c.database === 'rds' && (
+        <Row id="cache" sid="elasticache" title="ElastiCache" desc="bộ nhớ đệm giảm tải RDS">
+          <Toggle on={c.cache} onChange={(v) => set({ cache: v })} label="ElastiCache" />
         </Row>
       )}
 

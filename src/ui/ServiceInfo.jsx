@@ -5,7 +5,7 @@ import { presetById } from '../sim/presets.js';
 import { useApp, useUi } from '../state/store.js';
 import { Icon, ServiceIcon } from './icons.jsx';
 
-const ACTION_LABEL = { quake: 'Động đất', serverFail: 'Server hỏng', spike: '1 triệu người truy cập', dbFail: 'Database sự cố' };
+const ACTION_LABEL = { quake: 'Động đất', serverFail: 'Server hỏng', spike: '1 triệu người truy cập', dbFail: 'Database sự cố', ddos: 'Tấn công DDoS', sqlInjection: 'SQL injection' };
 
 export function openInSandbox(engine, ui, sandbox) {
   engine.setMode('sandbox');

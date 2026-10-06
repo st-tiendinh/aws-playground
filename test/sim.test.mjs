@@ -164,6 +164,55 @@ test('RDS single-AZ disk failure = long outage; Multi-AZ = short failover', () =
   assert.ok(b.events.some((e) => e.type === 'dbFailoverDone'));
 });
 
+test('ElastiCache absorbs reads so RDS survives a spike it would otherwise fail', () => {
+  const cfg = { compute: 'ec2', elb: true, asg: true, asgMin: 10, asgMax: 10, s3: true, database: 'rds' };
+  const a = new Simulation({ ...cfg, cache: false });
+  a.run(3);
+  const la = runScenario(a, 'spike');
+  assert.ok(la.suggestions.some((x) => x.patch.cache), 'should suggest enabling ElastiCache when RDS is the bottleneck');
+
+  const b = new Simulation({ ...cfg, cache: true });
+  b.run(3);
+  const lb = runScenario(b, 'spike');
+  assert.ok(lb.points.some((p) => p.kind === 'good' && /ElastiCache/.test(p.text)), 'should credit ElastiCache for the lower RDS load');
+  const rhoA = Math.max(...a.db.map((n) => n.load));
+  const rhoB = Math.max(...b.db.map((n) => n.load));
+  assert.ok(rhoB < rhoA, `cache should lower RDS load (no cache ${rhoA.toFixed(2)}, with cache ${rhoB.toFixed(2)})`);
+});
+
+test('AWS Shield absorbs a DDoS flood that would otherwise overload the fleet', () => {
+  const cfg = { compute: 'ec2', elb: true, asg: true, asgMin: 2, asgMax: 4 };
+  const a = new Simulation({ ...cfg, shield: false, waf: false });
+  a.run(2);
+  const la = runScenario(a, 'ddos');
+  assert.ok(la.suggestions.some((x) => x.patch.shield), 'should suggest enabling Shield when unprotected');
+
+  const b = new Simulation({ ...cfg, shield: true });
+  b.run(2);
+  const lb = runScenario(b, 'ddos');
+  assert.ok(lb.points.some((p) => p.kind === 'good' && /Shield/.test(p.text)), 'should credit Shield for absorbing the flood');
+  assert.notEqual(lb.grade, 'fail');
+});
+
+test('AWS WAF blocks SQL injection; Shield alone does not help', () => {
+  const a = sim('classic'); // RDS, no WAF
+  a.run(2);
+  const la = runScenario(a, 'sqlInjection');
+  assert.ok(la.suggestions.some((x) => x.patch.waf), 'should suggest enabling WAF');
+  assert.ok(la.points.some((p) => /Shield không giúp/.test(p.text)), 'should clarify Shield does not stop SQL injection');
+
+  const b = new Simulation({ ...presetById('classic').config, waf: true });
+  b.run(2);
+  const lb = runScenario(b, 'sqlInjection');
+  assert.equal(lb.grade, 'pass');
+  assert.ok(lb.points.some((p) => p.kind === 'good' && /WAF/.test(p.text)));
+});
+
+test('SQL injection is a no-op without a database', () => {
+  const s = new Simulation({ compute: 'ec2', ec2: { a: 1, b: 0 }, database: 'none' });
+  assert.equal(s.trigger('sqlInjection'), false);
+});
+
 test('night: fixed fleet wastes money, serverless cost drops', () => {
   const a = new Simulation({ elb: true, ec2: { a: 2, b: 2 } });
   a.run(2);

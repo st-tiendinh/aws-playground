@@ -373,6 +373,74 @@ export class LambdaModel extends Model {
   }
 }
 
+// ── ECS on Fargate: a deck of task containers, no server underneath ──────────
+const TASK_MAX = 6;
+export class ECSModel extends Model {
+  constructor(opts = {}) {
+    super('ecs', { category: 'compute', ...opts });
+    this.color = CAT_COLOR.compute;
+    this.height = 1.15;
+    this.radius = 1.5;
+    this.anchorY = 0.95;
+    this.add(new RoundedBoxGeometry(2.7, 0.24, 1.9, 2, 0.08), this.mat('#3b2412'), [0, 0.12, 0]);
+    this.deckMat = this.glow(this.color, 1.2);
+    this.add(new RoundedBoxGeometry(2.74, 0.05, 1.94, 2, 0.02), this.deckMat, [0, 0.265, 0], { shadow: false });
+    this.add(new RoundedBoxGeometry(2.56, 0.06, 1.76, 2, 0.03), this.mat('#4a2c16'), [0, 0.32, 0]);
+    // tasks fill the front row first, left to right
+    const shells = [this.mat('#f97316', { roughness: 0.5 }), this.mat('#ea580c', { roughness: 0.5 })];
+    const door = this.mat('#7c2d12');
+    const rib = this.mat('#9a3412');
+    const shellGeo = new RoundedBoxGeometry(0.72, 0.46, 0.4, 2, 0.04);
+    const doorGeo = new THREE.BoxGeometry(0.03, 0.38, 0.32);
+    const ribGeo = new THREE.BoxGeometry(0.035, 0.36, 0.42);
+    const ledGeo = new THREE.BoxGeometry(0.16, 0.03, 0.08);
+    this.tasks = [];
+    for (let k = 0; k < TASK_MAX; k++) {
+      const g = new THREE.Group();
+      g.position.set(((k % 3) - 1) * 0.82, 0.35, k < 3 ? 0.42 : -0.42);
+      g.visible = false;
+      this.body.add(g);
+      this.add(shellGeo, shells[k % 2], [0, 0.23, 0], { parent: g });
+      this.add(doorGeo, door, [0.36, 0.23, 0], { parent: g, shadow: false });
+      for (const x of [-0.24, -0.08, 0.08, 0.24]) this.add(ribGeo, rib, [x, 0.23, 0], { parent: g, shadow: false });
+      const led = this.glow(COLOR.ok, 2);
+      led.userData.noLook = true;
+      this.add(ledGeo, led, [-0.18, 0.475, 0], { parent: g, shadow: false });
+      this.tasks.push({ g, led, s: 0, ph: Math.random() * 6 });
+    }
+    this.count = 0;
+    this.ping = 0;
+    this.finish();
+  }
+
+  setCount(n) {
+    this.count = Math.max(0, Math.min(TASK_MAX, Math.round(n)));
+  }
+
+  pulse() {
+    this.ping = 1;
+  }
+
+  animate(dt, t) {
+    const failed = this.state === 'failed';
+    const pending = this.state === 'pending';
+    this.ping = Math.max(0, this.ping - dt * 2.5);
+    this.deckMat.emissiveIntensity = (0.9 + this.ping * 1.5) * (1 - this._fail);
+    for (const [k, task] of this.tasks.entries()) {
+      task.s += ((k < this.count ? 1 : 0) - task.s) * Math.min(1, dt * 6);
+      task.g.visible = task.s > 0.02;
+      if (!task.g.visible) continue;
+      task.g.scale.setScalar(task.s);
+      // starting tasks blink amber, running ones glow green
+      const col = failed ? cBad : pending ? cWarn : cOk;
+      const on = failed ? 0.1 : pending ? (Math.sin(t * 8 + k) > 0 ? 2.6 : 0.1) : 1.4 + 0.8 * Math.sin(t * 2 + task.ph);
+      task.led.color.copy(col);
+      task.led.emissive.copy(col);
+      task.led.emissiveIntensity = on;
+    }
+  }
+}
+
 // ── API Gateway: an arch requests walk through ───────────────────────────────
 export class GateModel extends Model {
   constructor(opts = {}) {

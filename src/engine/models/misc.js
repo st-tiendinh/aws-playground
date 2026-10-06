@@ -416,13 +416,28 @@ export class TokenModel extends Model {
     this.radius = size;
     this.anchorY = this.height * 0.6;
     this.bob = opts.bob ?? 0;
+    this.faceMat = m;
+    this.flashColor = new THREE.Color();
+    this.flashT = 0;
     this.finish();
+  }
+
+  // allow / deny verdict in the explore flows (WAF, Shield, Secrets Manager, Cognito…)
+  flash(kind) {
+    this.flashColor.set(kind === 'allow' ? COLOR.ok : COLOR.bad);
+    this.flashT = 1;
   }
 
   animate(dt, t) {
     if (this.bob) {
       this.body.position.y += Math.sin(t * 2) * this.bob;
       this.body.rotation.y = t * 0.6;
+    }
+    if (this.flashT > 0) {
+      this.flashT = Math.max(0, this.flashT - dt * 1.5);
+      this.faceMat.emissive.copy(this.flashColor);
+      this.faceMat.emissiveIntensity = 0.25 + this.flashT;
+      if (this.flashT === 0) this._lookDirty = true;
     }
   }
 }

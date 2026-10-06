@@ -457,6 +457,42 @@ export const FLOWS = {
     ],
   },
 
+  // ── ElastiCache ──────────────────────────────────────────────────────────────
+  elasticache: {
+    stage: { w: 32, d: 16 },
+    cam: { target: [0, 1, 0], dist: 24 },
+    nodes: [
+      { id: 'app', kind: 'ec2', pos: [-9, 0, 0], label: 'App server' },
+      { id: 'cache', kind: 'cache', pos: [0, 0, 0], label: 'ElastiCache', sub: 'Redis', size: 1.2 },
+      { id: 'rds', kind: 'rds', pos: [9, 0, 0], label: 'RDS', sub: 'MySQL' },
+    ],
+    steps: [
+      {
+        title: 'Cache miss: lần đầu phải hỏi RDS',
+        text: 'Ứng dụng luôn hỏi cache trước. Lần đầu tiên hỏi dữ liệu, cache chưa có gì (cache miss) nên phải đi tiếp xuống RDS.',
+        dur: 7,
+        run: [
+          at(0.3, pk('app', 'cache', { label: 'GET sản phẩm #42', color: REQ })),
+          at(1.2, co('cache', 'MISS', 'bad', { dy: 1.6 })),
+          at(1.5, pk('cache', 'rds', { label: 'GET #42', color: REQ })),
+          at(2.6, pk('rds', 'cache', { label: '{ tên, giá }', color: DB, then: [co('cache', 'lưu lại · TTL 60s', 'info', { dy: 1.6 })] })),
+          at(3.8, pk('cache', 'app', { label: '{ tên, giá }', color: DB })),
+        ],
+      },
+      {
+        title: 'Cache hit: các lần sau cực nhanh',
+        text: 'Những yêu cầu tiếp theo cho cùng sản phẩm được trả thẳng từ RAM — không chạm tới RDS, nhanh hơn hàng chục đến hàng trăm lần.',
+        loop: { every: 1.3, run: [pk('app', 'cache', { label: 'GET #42', color: REQ, back: { label: '{ tên, giá } ⚡', color: DB } })] },
+      },
+      {
+        title: 'RDS chỉ còn chịu phần nhỏ',
+        text: 'Khi rất nhiều người cùng xem một sản phẩm hot, phần lớn request dừng lại ở cache. RDS chỉ nhận những lượt thực sự mới (cache miss) hoặc khi dữ liệu hết hạn (TTL) — tránh bị nghẽn khi traffic tăng vọt.',
+        run: [at(0.3, co('rds', 'tải giảm hẳn', 'good', { dy: 1.8 }))],
+        loop: { every: 1.6, run: [pk('app', 'cache', { label: 'GET #42', color: REQ, back: { label: '⚡', color: DB } }), at(0.8, pk('app', 'cache', { label: 'GET #7 (mới)', color: REQ, then: [co('cache', 'miss', 'warn', { dy: 1.2 }), pk('cache', 'rds', { label: 'GET #7', color: REQ, back: { label: '{..}', color: DB } })] }))] },
+      },
+    ],
+  },
+
   // ── DynamoDB ───────────────────────────────────────────────────────────────
   dynamodb: {
     stage: { w: 32, d: 19 },
@@ -571,6 +607,108 @@ export const FLOWS = {
     ],
   },
 
+  // ── ECS + Fargate ──────────────────────────────────────────────────────────
+  ecs: {
+    stage: { w: 38, d: 20 },
+    cam: { target: [-11, 1, -4.5], dist: 14 },
+    nodes: [
+      { id: 'image', kind: 'token', shape: 'cube', text: 'IMG', color: '#c2410c', pos: [-14, 0, -5.5], size: 1.1, label: 'Container image', sub: 'shop-api:1.4 · trên Amazon ECR', hidden: true },
+      { id: 'taskdef', kind: 'token', shape: 'card', text: '{ }', color: '#7c2d12', pos: [-8, 0, -5.5], size: 1.3, label: 'Task definition', sub: '0.5 vCPU · 1 GB RAM', hidden: true },
+      { id: 'fargate', kind: 'ecs', pos: [2, 0, -1], label: 'ECS · Fargate', sub: 'service shop-api', hidden: true },
+      { id: 'crowd', kind: 'users', pos: [-14, 0, 3.5], radius: 3.6, count: 14, label: 'Người dùng', hidden: true },
+      { id: 'alb', kind: 'elb', pos: [-6, 0, 3.5], label: 'Load Balancer', hidden: true },
+      { id: 'aws', kind: 'token', shape: 'card', text: 'AWS', color: '#232f3e', pos: [2, 0, -6.5], size: 1.1, label: 'AWS', sub: 'vá & vận hành máy nền', hidden: true },
+      { id: 'ec2host', kind: 'ec2', pos: [10.5, 0, -1], label: 'ECS trên EC2', sub: 'container chạy trên máy của bạn', hidden: true },
+      { id: 'ops', kind: 'user', pos: [10.5, 0, -6.5], label: 'Bạn', sub: 'tự vận hành máy', hidden: true },
+      { id: 'fn', kind: 'lambda', pos: [10.5, 0, 5.5], label: 'Lambda', sub: 'tối đa 15 phút mỗi lần chạy', hidden: true },
+      { id: 'job', kind: 'token', shape: 'card', text: 'Job', color: '#854d0e', pos: [3, 0, 6.5], size: 1.1, label: 'Job xuất báo cáo', sub: 'chạy ~40 phút', hidden: true },
+    ],
+    steps: [
+      {
+        title: 'Đóng gói app thành container image',
+        text: 'Container gói code cùng thư viện và runtime thành một image — chạy giống hệt nhau trên máy bạn và trên AWS. Image được đẩy lên kho Amazon ECR để ECS kéo về khi cần chạy.',
+        show: ['image'],
+        dur: 6,
+        run: [at(1, co('image', 'docker push → ECR ✓', 'good'))],
+      },
+      {
+        title: 'Task definition: khai báo CPU và RAM',
+        text: 'Task definition là bản mô tả cách chạy container: image nào, bao nhiêu CPU/RAM (ở đây 0.5 vCPU, 1 GB), mở cổng nào, biến môi trường, IAM role. Bạn khai báo tài nguyên cho task — không chọn máy chủ nào cả.',
+        show: ['taskdef'],
+        run: [
+          at(0.4, pk('image', 'taskdef', { shape: 'cube', color: '#fdba74', label: 'image: shop-api:1.4', speed: 5 })),
+          at(2, co('taskdef', 'cpu: 0.5 vCPU', 'info')),
+          at(3.4, co('taskdef', 'memory: 1 GB', 'info')),
+          at(4.8, co('taskdef', 'port: 8080', 'info')),
+        ],
+      },
+      {
+        title: 'Fargate chạy task — không có EC2 nào để quản lý',
+        text: 'ECS giao task definition cho Fargate. Fargate tự tìm chỗ, kéo image và chạy container trong môi trường cách ly riêng với đúng 0.5 vCPU / 1 GB. Bạn không chọn instance type, không SSH, không vá hệ điều hành.',
+        cam: { target: [-3, 1, -2], dist: 22 },
+        show: ['fargate'],
+        dur: 8,
+        run: [
+          at(0.8, pk('taskdef', 'fargate', {
+            shape: 'card',
+            color: '#fdba74',
+            label: 'RunTask',
+            speed: 5,
+            then: [count('fargate', 1), state('fargate', 'pending'), state('fargate', 'ok', 2.2), at(2.2, co('fargate', 'RUNNING ✓', 'good', { dy: 1.7 }))],
+          })),
+        ],
+      },
+      {
+        title: 'Service giữ đủ số task',
+        text: 'ECS Service giữ số task mong muốn (desired = 2) và tự đăng ký task vào Load Balancer. Một task gặp lỗi và dừng? ECS chạy ngay task mới thay thế — giống Auto Scaling, nhưng cho container.',
+        cam: { target: [-5, 1, 2], dist: 27 },
+        show: ['crowd', 'alb'],
+        count: { fargate: 2 },
+        label: { fargate: ['ECS · Fargate', 'service shop-api · desired 2'] },
+        dur: 10,
+        run: [count('fargate', 1, 4), at(4, co('fargate', 'Task lỗi, dừng ✗', 'bad', { dy: 1.7 })), { do: 'sound', name: 'zap', at: 4 }, count('fargate', 2, 6.2), at(6.2, co('fargate', 'Task thay thế ✓', 'good', { dy: 1.7 }))],
+        loop: { every: 0.8, run: [pk('crowd', 'fargate', { via: ['alb'], size: 0.8 })] },
+      },
+      {
+        title: 'So với EC2: ai vá hệ điều hành?',
+        text: 'Chạy ECS trên EC2, bạn tự lo máy chủ: chọn AMI, vá OS, cập nhật ECS agent, thêm máy khi cụm đầy. Với Fargate, AWS vá và vận hành máy nền — bạn chỉ còn lo image: thư viện cũ trong image vẫn phải tự build lại.',
+        cam: { target: [6, 1, -2], dist: 20 },
+        hide: ['crowd', 'alb'],
+        show: ['ec2host', 'ops', 'aws'],
+        load: { ec2host: 0.45 },
+        dur: 10,
+        run: [
+          at(1, pk('ops', 'ec2host', { label: 'vá OS · cập nhật agent', color: REQ, then: [co('ec2host', 'Bạn lo ⚠', 'warn')] })),
+          at(2.2, pk('aws', 'fargate', { label: 'AWS vá máy nền', color: OK, then: [co('fargate', 'AWS lo ✓', 'good', { dy: 1.7 })] })),
+          at(4.2, pk('ops', 'ec2host', { label: 'cụm đầy → thêm EC2', color: REQ })),
+          at(6.4, co('fargate', 'image: vẫn do bạn build', 'info', { dy: 1.7, dur: 3 })),
+        ],
+      },
+      {
+        title: 'So với Lambda: việc dài hơn 15 phút',
+        text: 'Mỗi lần chạy Lambda bị dừng sau tối đa 15 phút. Việc dài như xuất báo cáo 40 phút, xử lý video hay worker chạy liên tục thì hợp với task Fargate: chạy bao lâu cũng được, tính tiền theo giây.',
+        cam: { target: [6, 1, 4], dist: 22 },
+        show: ['fn', 'job'],
+        dur: 10,
+        run: [
+          at(0.8, pk('job', 'fn', {
+            shape: 'card',
+            color: '#fde68a',
+            label: 'job ~40 phút',
+            then: [count('fn', 1), at(2.4, co('fn', '⏱ 15:00 · Timeout ✗', 'bad', { dur: 3 })), { do: 'sound', name: 'alert', at: 2.4 }, count('fn', 0, 2.6)],
+          })),
+          at(1.4, pk('job', 'fargate', { shape: 'card', color: '#fde68a', label: 'job ~40 phút', then: [at(4, co('fargate', '⏱ 40:00 · Xong ✓', 'good', { dy: 1.7, dur: 3 })), { do: 'sound', name: 'good', at: 4 }] })),
+        ],
+      },
+      {
+        title: 'Lambda, Fargate hay EC2?',
+        text: 'Lambda: việc ngắn theo sự kiện, không có request thì gần như không tốn tiền. Fargate: container chạy lâu dài mà không quản lý máy chủ. EC2: cần toàn quyền với máy, GPU, hoặc tải lớn đều đặn cần tối ưu chi phí.',
+        cam: { target: [6, 1, 1], dist: 26 },
+        run: [at(0.5, co('fn', 'ngắn · theo sự kiện', 'info', { dur: 3.5 })), at(1.7, co('fargate', 'container · chạy lâu', 'info', { dy: 1.7, dur: 3.5 })), at(2.9, co('ec2host', 'toàn quyền · GPU', 'info', { dur: 3.5 }))],
+      },
+    ],
+  },
+
   // ── API Gateway ────────────────────────────────────────────────────────────
   apigw: {
     stage: { w: 32, d: 19 },
@@ -599,7 +737,7 @@ export const FLOWS = {
       },
       {
         title: 'Xác thực',
-        text: 'API Gateway kiểm tra token (Cognito/JWT, API key, IAM…) trước khi chuyển tiếp. Request không hợp lệ bị chặn ngay tại cửa.',
+        text: 'API Gateway kiểm tra token (Cognito/JWT, API key, IAM…) trước khi chuyển tiếp. Request không hợp lệ bị chặn ngay tại cửa. Token "Bearer eyJ…" từ đâu ra? Xem bài Cognito.',
         show: ['bad'],
         loop: {
           every: 2.2,
@@ -954,6 +1092,307 @@ export const FLOWS = {
     ],
   },
 
+  // ── Cognito ────────────────────────────────────────────────────────────────
+  cognito: {
+    stage: { w: 36, d: 21 },
+    cam: { target: [-8.5, 1, -4], dist: 17 },
+    nodes: [
+      { id: 'app', kind: 'user', pos: [-11, 0, -2.5], label: 'An', sub: 'ứng dụng di động' },
+      { id: 'jwt', kind: 'token', shape: 'card', text: 'JWT', color: '#6d28d9', pos: [-8.5, 0, 0], size: 1.0, label: 'JWT', sub: 'ID · access · refresh token', hidden: true },
+      { id: 'cognito', kind: 'cognito', pos: [-6, 0, -7.5], label: 'Cognito User Pool', sub: 'shop-users' },
+      { id: 'gw', kind: 'apigw', pos: [-1.5, 0, -1.5], label: 'API Gateway', sub: 'api.shop.vn · Cognito authorizer', hidden: true },
+      { id: 'fn', kind: 'lambda', pos: [6, 0, -1.5], label: 'Lambda', sub: 'GET /orders', count: 2, hidden: true },
+      { id: 'bad', kind: 'user', shirt: '#ef4444', pos: [-11, 0, 3.5], label: 'Client lạ', sub: 'không có token hợp lệ', hidden: true },
+      { id: 'u2', kind: 'user', shirt: '#f472b6', pos: [-11, 0, 8], label: 'Bình', sub: 'trình duyệt web', hidden: true },
+      { id: 'alb', kind: 'elb', pos: [-1.5, 0, 7], label: 'Load Balancer', sub: 'listener: authenticate-cognito', hidden: true },
+      { id: 'web', kind: 'ec2', pos: [6, 0, 7], label: 'Web app', sub: 'EC2', hidden: true },
+    ],
+    steps: [
+      {
+        title: 'Đăng ký tài khoản',
+        text: 'An đăng ký bằng email và mật khẩu. User Pool tạo tài khoản (không lưu mật khẩu dạng rõ) và gửi mã xác minh qua email; nhập đúng mã là tài khoản được kích hoạt. Không phải tự viết bảng users hay luồng quên mật khẩu.',
+        dur: 9,
+        run: [
+          at(0.5, pk('app', 'cognito', { shape: 'card', label: 'SignUp · an@mail.vn', color: '#fda4af', then: [co('cognito', 'Tài khoản mới · chờ xác minh', 'warn', { dy: 1.8 })] })),
+          at(2.8, pk('cognito', 'app', { shape: 'card', label: '✉ mã xác minh 482913', color: DNS })),
+          at(5, pk('app', 'cognito', { label: 'ConfirmSignUp 482913', color: '#fda4af', then: [{ do: 'flash', node: 'cognito', kind: 'allow' }, co('cognito', 'Đã xác minh ✓', 'good', { dy: 1.8 })] })),
+        ],
+      },
+      {
+        title: 'Đăng nhập → nhận JWT',
+        text: 'Đăng nhập đúng (và qua MFA nếu bật), Cognito trả về 3 token JWT: ID token (An là ai), access token (được gọi API nào), refresh token (xin token mới khi hết hạn). Cũng đăng nhập được bằng Google, Facebook, Apple…',
+        dur: 8,
+        run: [
+          at(0.5, pk('app', 'cognito', {
+            label: 'đăng nhập · email + mật khẩu',
+            color: '#fda4af',
+            then: [{ do: 'flash', node: 'cognito', kind: 'allow' }],
+            back: { label: 'ID · access · refresh token', color: OK, shape: 'card' },
+            backThen: [show('jwt'), co('app', 'Đã đăng nhập ✓', 'good')],
+          })),
+          at(4.5, co('cognito', 'MFA · Google · Apple…', 'info', { dy: 1.8, dur: 3 })),
+        ],
+      },
+      {
+        title: 'Bên trong một JWT',
+        text: 'JWT gồm header, payload (sub, email, hạn dùng exp…) và chữ ký số của Cognito. Sửa payload thì chữ ký không còn khớp, nên API tự kiểm tra token bằng khoá công khai của User Pool — không cần hỏi lại Cognito mỗi lần.',
+        cam: { target: [-9, 1, -1], dist: 12 },
+        dur: 8,
+        run: [
+          at(0.4, co('jwt', 'header.payload.signature', 'info', { dur: 2.6 })),
+          at(1.8, co('jwt', 'email: an@mail.vn', 'info', { dur: 2.6 })),
+          at(3.2, co('jwt', 'exp: hết hạn sau 1 giờ', 'warn', { dur: 2.6 })),
+          at(4.6, co('jwt', 'chữ ký số của Cognito ✓', 'good', { dur: 2.6 })),
+        ],
+      },
+      {
+        title: 'API Gateway kiểm tra token trước khi vào app',
+        text: 'Đây là bước "Xác thực" trong bài API Gateway: app gửi access token trong header Authorization: Bearer eyJ…. Authorizer kiểm tra chữ ký, hạn dùng, nơi phát — hợp lệ mới tới Lambda, thiếu hoặc sai thì 401 ngay tại cửa.',
+        cam: { target: [-3, 1, -0.5], dist: 26 },
+        show: ['gw', 'fn', 'bad'],
+        dur: 9,
+        loop: {
+          every: 2.4,
+          run: [
+            pk('app', 'fn', { via: ['gw'], label: 'Bearer eyJ…', back: { label: '200 · đơn của An', color: OK } }),
+            at(1.1, pk('bad', 'gw', { label: 'không có token', color: BAD, fail: 'bounce', then: [co('gw', '401 Unauthorized', 'bad')] })),
+          ],
+        },
+      },
+      {
+        title: 'Token bị sửa hoặc hết hạn',
+        text: 'Kẻ lạ sửa payload thành "admin" thì chữ ký sai → 401. Token của An hết hạn (mặc định sau 1 giờ) cũng bị từ chối; app tự dùng refresh token xin token mới rồi gọi lại — An không phải đăng nhập lại.',
+        dur: 11,
+        run: [
+          at(0.5, pk('bad', 'gw', { label: 'eyJ… (sửa thành admin)', color: BAD, fail: 'bounce', then: [co('gw', '401 · chữ ký sai', 'bad')] })),
+          at(2.8, pk('app', 'gw', { label: 'Bearer eyJ… (hết hạn)', color: REQ, fail: 'bounce', then: [co('gw', '401 · token hết hạn', 'warn')] })),
+          at(5, pk('app', 'cognito', {
+            label: 'refresh token',
+            color: PURPLE,
+            back: { label: 'token mới', color: OK, shape: 'card' },
+            backThen: [pk('app', 'fn', { via: ['gw'], label: 'Bearer eyJ… (mới)', back: { label: '200', color: OK } })],
+          })),
+        ],
+      },
+      {
+        title: 'ALB cũng xác thực được',
+        text: 'Web sau ALB cũng không cần tự làm đăng nhập: thêm action authenticate-cognito vào listener. Chưa đăng nhập thì ALB chuyển sang trang đăng nhập của Cognito; đăng nhập xong, ALB giữ phiên bằng cookie và cho vào app.',
+        cam: { target: [-3, 1, 3], dist: 29 },
+        hide: ['bad'],
+        show: ['u2', 'alb', 'web'],
+        dur: 11,
+        run: [
+          at(0.8, pk('u2', 'alb', { label: 'GET /tai-khoan', fail: 'bounce', then: [co('alb', '302 → trang đăng nhập', 'warn')] })),
+          at(3, pk('u2', 'cognito', { label: 'đăng nhập', color: '#fda4af', then: [{ do: 'flash', node: 'cognito', kind: 'allow' }], back: { label: 'đăng nhập ✓', color: OK, shape: 'card' } })),
+        ],
+        loop: { start: 6.5, every: 1.8, run: [pk('u2', 'web', { via: ['alb'], label: 'GET /tai-khoan + cookie', back: { label: '200', color: OK } })] },
+      },
+      {
+        title: 'Ai lo phần nào?',
+        text: 'Cognito lo tài khoản: đăng ký, đăng nhập, MFA, quên mật khẩu, đăng nhập mạng xã hội, phát và làm mới token. API Gateway / ALB chặn request chưa xác thực ở cửa. Code của bạn chỉ còn lo nghiệp vụ.',
+        cam: { target: [-3, 1, 1], dist: 33 },
+        run: [
+          at(0.4, co('cognito', 'tài khoản · token', 'info', { dy: 1.8, dur: 3.5 })),
+          at(1.6, co('gw', 'chặn ở cửa', 'info', { dur: 3.5 })),
+          at(1.6, co('alb', 'chặn ở cửa', 'info', { dur: 3.5 })),
+          at(2.8, co('fn', 'chỉ lo nghiệp vụ', 'good', { dur: 3.5 })),
+          at(2.8, co('web', 'chỉ lo nghiệp vụ', 'good', { dur: 3.5 })),
+        ],
+        loop: { every: 2.2, run: [pk('app', 'fn', { via: ['gw'], size: 0.8, back: { color: OK } }), at(1.1, pk('u2', 'web', { via: ['alb'], size: 0.8, back: { color: OK } }))] },
+      },
+    ],
+  },
+
+  // ── Secrets Manager ────────────────────────────────────────────────────────
+  secrets: {
+    stage: { w: 34, d: 20 },
+    cam: { target: [0.5, 1, -1.5], dist: 23 },
+    nodes: [
+      { id: 'app', kind: 'ec2', pos: [-7, 0, -2.5], label: 'App server', sub: 'EC2 · IAM role app-role', state: 'pending' },
+      { id: 'fn', kind: 'lambda', pos: [-7, 0, 4.5], label: 'Lambda', sub: 'báo cáo hằng đêm', hidden: true },
+      { id: 'vault', kind: 'secrets', pos: [0.5, 0, 0], label: 'Secrets Manager', sub: 'secret: prod/shop/db', hidden: true },
+      { id: 'rds', kind: 'rds', pos: [8, 0, -2.5], label: 'RDS', sub: 'MySQL · user app' },
+      { id: 'code', kind: 'token', shape: 'card', text: '{ }', color: '#1e293b', pos: [-11.5, 0, -7.5], size: 1.3, label: 'config.js', sub: 'DB_PASSWORD = "S3cr3t!"', hidden: true },
+      { id: 'git', kind: 'token', shape: 'cube', text: 'Git', color: '#9a3412', pos: [-5, 0, -8], size: 1.1, label: 'Kho code (Git)', sub: 'nhiều người đọc được', hidden: true },
+      { id: 'hacker', kind: 'user', shirt: '#ef4444', pos: [2, 0, -8.5], label: 'Kẻ lạ', sub: 'có bản sao code', hidden: true },
+    ],
+    steps: [
+      {
+        title: 'Ứng dụng khởi động, cần mật khẩu database',
+        text: 'App server vừa khởi động và cần mật khẩu để kết nối RDS. Nhưng mật khẩu không nằm trong code hay file cấu hình — app chỉ biết tên của secret: prod/shop/db.',
+        dur: 6,
+        run: [state('app', 'ok', 1.6), at(2, co('app', 'Mật khẩu DB ở đâu?', 'warn'))],
+      },
+      {
+        title: 'Mật khẩu được cất trong Secrets Manager',
+        text: 'Secrets Manager lưu secret (username, password, host…) đã mã hoá bằng khoá KMS. Mỗi secret có tên riêng, và chỉ danh tính nào được IAM cho phép mới đọc được.',
+        cam: { target: [0, 1, 0.5], dist: 15 },
+        show: ['vault'],
+        run: [at(1, co('vault', '🔒 mã hoá bằng KMS', 'info', { dy: 1.9, dur: 3 }))],
+      },
+      {
+        title: 'Lúc khởi động: gọi GetSecretValue',
+        text: 'App dùng IAM role của EC2 (khoá tạm thời, không nằm trong code) gọi GetSecretValue. IAM kiểm tra role được đọc secret này; Secrets Manager giải mã và trả mật khẩu qua HTTPS — mật khẩu chỉ nằm trong RAM của app.',
+        cam: { target: [-2.5, 1, -0.5], dist: 20 },
+        dur: 8,
+        run: [
+          at(0.6, pk('app', 'vault', {
+            label: 'GetSecretValue prod/shop/db',
+            color: CYAN,
+            then: [{ do: 'flash', node: 'vault', kind: 'allow' }, co('vault', 'IAM: role được phép ✓', 'good', { dy: 1.9 })],
+            back: { label: '🔑 password', color: OK, shape: 'card' },
+            backThen: [co('app', 'Mật khẩu trong RAM ✓', 'good')],
+          })),
+        ],
+      },
+      {
+        title: 'Kết nối RDS bằng mật khẩu vừa lấy',
+        text: 'Có mật khẩu, app kết nối RDS như bình thường. Nên giữ secret trong bộ nhớ vài phút (cache) thay vì gọi Secrets Manager cho từng truy vấn — nhanh hơn và đỡ phí API.',
+        cam: { target: [0.5, 1, -1], dist: 23 },
+        run: [at(0.4, co('app', 'cache secret · 5 phút', 'info', { dur: 3 }))],
+        loop: { start: 0.6, every: 1.6, run: [pk('app', 'rds', { label: 'SELECT … (user app)', color: DB, back: { label: 'rows', color: OK } })] },
+      },
+      {
+        title: 'Lambda cũng làm y hệt',
+        text: 'Lambda lấy secret ở lần chạy đầu (cold start) bằng execution role của nó rồi giữ lại cho các lần chạy sau. Không cần đặt mật khẩu vào biến môi trường của function.',
+        cam: { target: [0, 1, 1.5], dist: 25 },
+        show: ['fn'],
+        count: { fn: 1 },
+        dur: 8,
+        run: [
+          at(0.8, pk('fn', 'vault', {
+            label: 'GetSecretValue (cold start)',
+            color: CYAN,
+            then: [{ do: 'flash', node: 'vault', kind: 'allow' }],
+            back: { label: '🔑', color: OK, shape: 'card' },
+            backThen: [co('fn', 'Đã cache ✓', 'good')],
+          })),
+        ],
+        loop: { start: 3.6, every: 1.5, run: [pk('fn', 'rds', { label: 'INSERT báo cáo', color: DB, back: { color: OK } })] },
+      },
+      {
+        title: 'Tự động đổi mật khẩu (rotation)',
+        text: 'Bật rotation, Secrets Manager định kỳ (ví dụ 30 ngày) tạo mật khẩu mới, đặt vào RDS và đánh dấu bản mới là AWSCURRENT. Không sửa code, không deploy lại: lần lấy secret kế tiếp, app nhận ngay mật khẩu mới.',
+        cam: { target: [0.5, 1, -1], dist: 23 },
+        dur: 10,
+        run: [
+          at(0.6, co('vault', '⏰ rotation · 30 ngày', 'warn', { dy: 1.9 })),
+          at(1.4, pk('vault', 'rds', { label: 'đặt mật khẩu mới', color: PURPLE, then: [co('rds', 'mật khẩu v2 ✓', 'good')] })),
+          { do: 'label', node: 'vault', sub: 'prod/shop/db · v2 = AWSCURRENT', at: 3 },
+          at(4.4, pk('app', 'vault', {
+            label: 'GetSecretValue (hết cache)',
+            color: CYAN,
+            then: [{ do: 'flash', node: 'vault', kind: 'allow' }],
+            back: { label: '🔑 v2', color: OK, shape: 'card' },
+            backThen: [pk('app', 'rds', { label: 'SELECT …', color: DB, back: { label: 'rows', color: OK } })],
+          })),
+        ],
+      },
+      {
+        title: 'Nếu ghi cứng mật khẩu trong code…',
+        text: 'Cách làm rủi ro: DB_PASSWORD = "S3cr3t!" nằm ngay trong code hoặc file .env. Code đi qua Git, máy dev, CI, image… ai đọc được code là có mật khẩu production. Muốn đổi mật khẩu lại phải sửa code, deploy lại.',
+        cam: { target: [-4.5, 1, -5.5], dist: 21 },
+        show: ['code', 'git', 'hacker'],
+        dur: 10,
+        run: [
+          at(0.8, pk('code', 'git', { shape: 'card', label: 'git push', color: '#94a3b8', speed: 5 })),
+          at(2.8, pk('git', 'hacker', { shape: 'card', label: 'DB_PASSWORD="S3cr3t!"', color: BAD, speed: 5, then: [co('hacker', 'Có mật khẩu production ✗', 'bad', { dy: 1.8, dur: 3 })] })),
+          at(5.6, co('code', 'đổi mật khẩu = sửa code + deploy', 'warn', { dur: 3 })),
+        ],
+      },
+      {
+        title: 'Lộ code cũng không lộ mật khẩu',
+        text: 'Với Secrets Manager, code chỉ chứa tên secret. Kẻ lạ có code trong tay, gọi GetSecretValue vẫn bị IAM từ chối vì không có quyền — và mọi lần đọc secret đều được CloudTrail ghi lại để kiểm tra.',
+        cam: { target: [-4.5, 1, -4], dist: 24 },
+        label: { code: ['config.js', 'secretId = "prod/shop/db"'] },
+        dur: 9,
+        loop: {
+          every: 2.6,
+          run: [
+            pk('hacker', 'vault', { label: 'GetSecretValue prod/shop/db', color: BAD, fail: 'bounce', then: [{ do: 'flash', node: 'vault', kind: 'deny' }, co('vault', 'AccessDenied', 'bad', { dy: 1.9 })] }),
+            at(1.3, pk('app', 'vault', { label: 'GetSecretValue (role)', color: CYAN, then: [{ do: 'flash', node: 'vault', kind: 'allow' }], back: { label: '🔑', color: OK, shape: 'card' } })),
+          ],
+        },
+      },
+    ],
+  },
+
+  // ── WAF ────────────────────────────────────────────────────────────────────
+  waf: {
+    stage: { w: 34, d: 19 },
+    cam: { target: [1, 1, 0], dist: 25 },
+    nodes: [
+      { id: 'user', kind: 'user', pos: [-11, 0, -4], label: 'Khách hàng', sub: 'request bình thường' },
+      { id: 'attacker', kind: 'user', shirt: '#dc2626', pos: [-11, 0, 4], label: 'Kẻ tấn công', hidden: true },
+      { id: 'waf', kind: 'waf', pos: [-1, 0, 0], label: 'WAF', sub: 'kiểm tra nội dung' },
+      { id: 'app', kind: 'ec2', pos: [9, 0, 0], label: 'App server' },
+      { id: 'rds', kind: 'rds', pos: [16, 0, 0], label: 'RDS', hidden: true },
+    ],
+    steps: [
+      {
+        title: 'Request hợp lệ đi qua bình thường',
+        text: 'WAF đứng trước ALB/CloudFront, soi từng request. Request bình thường khớp mọi rule cho phép nên đi tiếp ngay.',
+        loop: { every: 2, run: [pk('user', 'waf', { label: 'GET /san-pham', then: [{ do: 'flash', node: 'waf', kind: 'allow' }, pk('waf', 'app', { color: OK })] })] },
+      },
+      {
+        title: 'SQL injection bị chặn',
+        text: 'Kẻ tấn công chèn mã SQL vào ô tìm kiếm. Rule có sẵn của WAF (managed rule group) nhận ra mẫu này và chặn ngay — RDS không bao giờ nhận được request.',
+        show: ['attacker', 'rds'],
+        loop: { every: 2.2, run: [pk('attacker', 'waf', { label: "' OR 1=1 --", color: BAD, fail: 'bounce', then: [{ do: 'flash', node: 'waf', kind: 'deny' }, co('waf', 'Blocked ✗', 'bad')] })] },
+      },
+      {
+        title: 'Rate-based rule: chặn dò mật khẩu',
+        text: 'Cùng một IP gửi hàng trăm request đăng nhập trong vài giây để dò mật khẩu. WAF tự động chặn IP đó một thời gian khi vượt ngưỡng — không cần ai viết rule riêng cho từng kiểu tấn công.',
+        loop: { every: 1.1, run: [pk('attacker', 'waf', { label: 'POST /login', color: BAD, fail: 'bounce', then: [{ do: 'flash', node: 'waf', kind: 'deny' }] })] },
+      },
+      {
+        title: 'WAF không lo DDoS khối lượng lớn',
+        text: 'WAF giỏi đọc nội dung từng request, nhưng một cuộc DDoS hàng triệu request/giây cần một lớp chặn ở tầng mạng trước đó — đó là việc của AWS Shield.',
+      },
+    ],
+  },
+
+  // ── Shield ─────────────────────────────────────────────────────────────────
+  shield: {
+    stage: { w: 34, d: 19 },
+    cam: { target: [0, 1, 0], dist: 27 },
+    nodes: [
+      { id: 'user', kind: 'user', pos: [-12, 0, -5], label: 'Người dùng thật' },
+      { id: 'botnet', kind: 'users', pos: [-12, 0, 5], radius: 3, count: 14, label: 'Botnet', sub: 'hàng nghìn nguồn', hidden: true },
+      { id: 'shield', kind: 'shield', pos: [-1, 0, 0], label: 'Shield', sub: 'giám sát traffic' },
+      { id: 'elb', kind: 'elb', pos: [8, 0, 0], label: 'Load Balancer' },
+      { id: 'app', kind: 'ec2', pos: [15, 0, 0], label: 'App server' },
+    ],
+    steps: [
+      {
+        title: 'Traffic bình thường đi qua',
+        text: 'Shield Standard chạy nền miễn phí, tự động cho mọi tài khoản AWS — không cần bật, không chặn traffic hợp lệ.',
+        loop: { every: 1.6, run: [pk('user', 'shield', { then: [pk('shield', 'elb', { color: OK, then: [pk('elb', 'app', { color: OK })] })] })] },
+      },
+      {
+        title: 'Botnet dội hàng loạt request rác',
+        text: 'Hàng nghìn máy bị chiếm quyền (botnet) cùng gửi request tới một mục tiêu, hòng làm nghẽn băng thông hoặc chiếm hết công suất máy chủ.',
+        show: ['botnet'],
+        run: [at(0.4, co('botnet', 'DDoS!', 'bad', { dy: 1.8 }))],
+      },
+      {
+        title: 'Shield chặn phần lớn ngay tầng mạng',
+        text: 'Shield nhận diện mẫu lưu lượng tấn công phổ biến (SYN flood, UDP reflection…) và chặn gần hết trước khi nó chạm tới ELB — máy chủ thật không hề hay biết.',
+        loop: {
+          every: 1.3,
+          run: [
+            pk('botnet', 'shield', { color: BAD, size: 1.4, then: [{ do: 'flash', node: 'shield', kind: 'deny' }] }),
+            at(0.5, pk('user', 'shield', { then: [pk('shield', 'elb', { color: OK, then: [pk('elb', 'app', { color: OK })] })] })),
+          ],
+        },
+      },
+      {
+        title: 'Shield không đọc nội dung request',
+        text: 'Shield chỉ nhìn khối lượng và mẫu lưu lượng — nó không biết một request có chứa mã SQL độc hại hay không. Muốn chặn kiểu tấn công đó (SQL injection, XSS) cần thêm AWS WAF.',
+      },
+    ],
+  },
+
   // ── CloudWatch ─────────────────────────────────────────────────────────────
   cloudwatch: {
     stage: { w: 34, d: 19 },
@@ -963,7 +1402,7 @@ export const FLOWS = {
       { id: 's2', kind: 'ec2', pos: [-8, 0, 3], label: 'EC2 #2', small: true },
       { id: 's3', kind: 'ec2', pos: [-4.5, 0, 0], label: 'EC2 #3', small: true, hidden: true },
       { id: 'cw', kind: 'cloudwatch', pos: [3, 0, 0], label: 'CloudWatch', sub: 'Dashboard' },
-      { id: 'sns', kind: 'token', shape: 'card', text: 'SNS', color: '#be185d', pos: [10, 0, -4], size: 1.2, label: 'SNS', sub: 'gửi thông báo', hidden: true },
+      { id: 'sns', kind: 'sns', pos: [10, 0, -4], label: 'SNS', sub: 'gửi thông báo', hidden: true },
       { id: 'admin', kind: 'user', pos: [14, 0, 1], label: 'Quản trị viên', hidden: true },
     ],
     steps: [
@@ -1005,6 +1444,46 @@ export const FLOWS = {
         title: 'Logs',
         text: 'Ứng dụng ghi log vào CloudWatch Logs để tìm lỗi, lọc theo từ khoá và tạo metric từ log (ví dụ đếm số lỗi 500).',
         loop: { every: 1.1, run: [pk('s1', 'cw', { label: 'GET /cart 200', color: '#94a3b8', size: 0.5 }), at(0.55, pk('s2', 'cw', { label: 'ERROR timeout', color: BAD, size: 0.5 }))] },
+      },
+    ],
+  },
+
+  // ── SNS ────────────────────────────────────────────────────────────────────
+  sns: {
+    stage: { w: 36, d: 20 },
+    cam: { target: [2, 1, 0], dist: 30 },
+    nodes: [
+      { id: 'pub', kind: 'ec2', pos: [-11, 0, 0], label: 'Order service', sub: 'publisher' },
+      { id: 'topic', kind: 'sns', pos: [-1, 0, 0], label: 'SNS Topic', sub: 'order-events', size: 1.3 },
+      { id: 'email', kind: 'user', pos: [7, 0, -5.5], label: 'Quản trị viên', sub: 'email', hidden: true },
+      { id: 'queue', kind: 'sqs', pos: [7, 0, 0], label: 'SQS queue', sub: 'trừ kho', count: 0, hidden: true },
+      { id: 'fn', kind: 'lambda', pos: [7, 0, 5.5], label: 'Lambda', sub: 'ghi log phân tích', hidden: true },
+    ],
+    steps: [
+      {
+        title: 'Publisher chỉ gửi một thông điệp',
+        text: 'Order service gửi một thông điệp duy nhất vào SNS topic. Nó không cần biết ai sẽ nhận, hay có bao nhiêu subscriber.',
+        run: [at(0.4, pk('pub', 'topic', { shape: 'card', label: 'Đơn hàng #482', color: '#fde68a', speed: 5 }))],
+      },
+      {
+        title: 'Topic phát song song tới mọi subscriber (fan-out)',
+        text: 'SNS nhân bản thông điệp và gửi cùng lúc tới từng subscriber đã đăng ký: email, SQS, Lambda… subscriber nào cũng nhận gần như ngay lập tức.',
+        show: ['email', 'queue', 'fn'],
+        run: [
+          at(0.4, pk('topic', 'email', { shape: 'card', label: 'Thông báo', color: '#fda4af' })),
+          at(0.4, pk('topic', 'queue', { shape: 'card', label: 'Đơn hàng #482', color: '#fde68a', then: [count('queue', 1)] })),
+          at(0.4, pk('topic', 'fn', { shape: 'card', label: 'Đơn hàng #482', color: '#a5f3fc' })),
+        ],
+      },
+      {
+        title: 'Mỗi subscriber xử lý độc lập',
+        text: 'Quản trị viên nhận email, SQS giữ đơn hàng chờ worker trừ kho, Lambda ghi log để phân tích — ba việc khác nhau, không ai chờ ai, không ai chặn ai.',
+        run: [at(0.2, co('email', 'Email mới', 'good', { dy: 1.4 })), at(0.5, co('queue', '1 tin đang chờ', 'info', { dy: 1.4 })), at(0.8, co('fn', 'Đã log', 'good', { dy: 1.4 }))],
+      },
+      {
+        title: 'Đây cũng là cặp Alarm → SNS → Email',
+        text: 'Khi CloudWatch Alarm chuyển sang trạng thái ALARM, nó cũng chỉ "publish" một thông điệp vào một SNS topic giống hệt trên — SNS lo việc gửi email/SMS, Alarm không cần biết địa chỉ của ai.',
+        run: [at(0.3, co('topic', 'publisher = CloudWatch Alarm', 'warn', { dy: 1.8 }))],
       },
     ],
   },

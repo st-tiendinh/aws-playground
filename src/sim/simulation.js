@@ -9,8 +9,10 @@ import {
   AZ_CODE,
   AZ_IDS,
   AZ_LABEL,
+  CACHE,
   CF,
   DDB,
+  DDOS,
   EC2,
   ELB,
   HEALTH,
@@ -25,9 +27,11 @@ import {
   S3,
   SCENARIO_TIME,
   SPIKE_HOLD,
+  SQLI,
   STATIC_SHARE,
   STEP,
   USERS,
+  WAF,
 } from './constants.js';
 import { evaluateLesson } from './lessons.js';
 
@@ -45,6 +49,9 @@ export const DEFAULT_CONFIG = {
   nat: 'none', // 'none' | 'single' | 'perAz' — NAT Gateways for a private fleet
   database: 'none', // 'none' | 'rds' | 'dynamodb'
   rdsMultiAz: false,
+  cache: false, // ElastiCache in front of RDS
+  waf: false, // AWS WAF: app-layer rules (blocks SQL injection, rate-based rules)
+  shield: false, // AWS Shield: dedicated network-layer DDoS defence
 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -67,7 +74,7 @@ export function normalizeConfig(c = {}) {
   const out = { ...DEFAULT_CONFIG, ...c, ec2: { ...DEFAULT_CONFIG.ec2, ...(c.ec2 || {}) } };
   out.compute = out.compute === 'lambda' ? 'lambda' : 'ec2';
   out.database = out.database === 'rds' || out.database === 'dynamodb' ? out.database : 'none';
-  for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz']) out[k] = !!out[k];
+  for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz', 'cache', 'waf', 'shield']) out[k] = !!out[k];
   for (const az of AZ_IDS) out.ec2[az] = clamp(Math.round(out.ec2[az] || 0), 0, EC2.maxPerAz);
   if (out.compute === 'ec2' && !out.asg && out.ec2.a + out.ec2.b === 0) out.ec2.a = 1;
   out.asgMin = clamp(Math.round(out.asgMin || 1), 1, ASG.limit);
@@ -76,7 +83,10 @@ export function normalizeConfig(c = {}) {
     out.elb = false;
     out.asg = false;
   }
-  if (out.database !== 'rds') out.rdsMultiAz = false;
+  if (out.database !== 'rds') {
+    out.rdsMultiAz = false;
+    out.cache = false;
+  }
   // servers in a private subnet are only reachable through a load balancer, and a NAT
   // Gateway only makes sense for a private fleet
   out.appSubnet = out.appSubnet === 'private' && out.compute === 'ec2' && out.elb ? 'private' : 'public';
@@ -91,6 +101,9 @@ const NAMES = {
   elb: 'Elastic Load Balancer',
   asg: 'Auto Scaling',
   rdsMultiAz: 'RDS Multi-AZ',
+  cache: 'ElastiCache',
+  waf: 'AWS WAF',
+  shield: 'AWS Shield',
 };
 
 const instName = (i) => `EC2 #${i.n}`;
@@ -165,6 +178,10 @@ export class Simulation {
         return this._dbFail();
       case 'night':
         return this._night();
+      case 'ddos':
+        return this._ddos();
+      case 'sqlInjection':
+        return this._sqlInjection();
       case 'repair':
         return this._repair();
       default:
@@ -209,6 +226,10 @@ export class Simulation {
       outbound: { rps: this.flows.outRps || 0, failing: this.flows.outFailRps || 0 },
       totals: { ...this.totals },
       cfHit: this.flows.cfHit,
+      cacheHit: this.flows.cacheHit,
+      ddosRps: this.flows.ddosRps,
+      ddosBlocked: this.flows.ddosBlocked,
+      sqliFail: this.flows.sqliFail,
       scenario: sc ? { action: sc.action, az: sc.az, remaining: Math.max(0, sc.end - this.t) } : null,
     };
   }
@@ -231,6 +252,9 @@ export class Simulation {
     this.night = false;
     this.lambda = { conc: 0, warm: 0, need: 0, coldFrac: 0, coldRate: 0 };
     this.cfSince = -100;
+    this.cacheSince = -100;
+    this._ddosRps = 0;
+    this._sqliActive = false;
     this.asgDesired = 0;
     this._overSince = null;
     this._lastScaleIn = -100;
@@ -240,7 +264,7 @@ export class Simulation {
     this._maxWarned = false;
     this._noAzWarned = false;
     this._rebalancing = false;
-    this.flows = { rps: 0, targets: [], cfHit: 0, appRps: 0, avgCpu: 0 };
+    this.flows = { rps: 0, targets: [], cfHit: 0, cacheHit: 0, ddosRps: 0, ddosBlocked: 0, sqliFail: 0, appRps: 0, avgCpu: 0 };
     this.metrics = {
       success: 1,
       successRaw: 1,
@@ -341,6 +365,8 @@ export class Simulation {
 
     // CloudFront starts with an empty cache when it is switched on mid-run
     if (c.cloudfront && !(prev && prev.cloudfront)) this.cfSince = initial ? -100 : this.t;
+    // ElastiCache likewise starts cold when it is switched on mid-run
+    if (c.cache && !(prev && prev.cache)) this.cacheSince = initial ? -100 : this.t;
   }
 
   // how an instance reaches the Internet for its outside API calls
@@ -759,6 +785,11 @@ export class Simulation {
       route53: c.route53,
       cf: c.cloudfront,
       cfHit: 0,
+      cache: c.cache,
+      cacheHit: 0,
+      ddosRps: 0,
+      ddosBlocked: 0,
+      sqliFail: 0,
       s3: c.s3,
       staticToApp: !c.s3,
       compute: c.compute,
@@ -788,7 +819,18 @@ export class Simulation {
       miss = staticRps - edge;
     }
     const s3 = c.s3 ? miss : 0;
-    const appRps = dynRps + (c.s3 ? 0 : miss);
+
+    // DDoS: a flood of junk requests hits the same entry point as real traffic. Shield is the
+    // dedicated defence (blocks almost all of it); a WAF rate-based rule alone helps some but
+    // is not a substitute.
+    const ddosRaw = this._ddosRps || 0;
+    const ddosMitigation = c.shield ? DDOS.shieldMitigation : c.waf ? DDOS.wafOnlyMitigation : 0;
+    const ddosBlocked = ddosRaw * ddosMitigation;
+    const ddosThrough = ddosRaw - ddosBlocked;
+    f.ddosRps = ddosRaw;
+    f.ddosBlocked = ddosBlocked;
+
+    const appRps = dynRps + (c.s3 ? 0 : miss) + ddosThrough;
     f.appRps = appRps;
 
     let appServed = 0;
@@ -870,29 +912,49 @@ export class Simulation {
       } else if (f.gwFail === 0) this._gwWarned = false;
     }
 
-    // database tier (only the dynamic part needs it)
+    // database tier (only the dynamic part needs it). appServed is shared fairly across every
+    // kind of request hitting the app tier — legit dynamic, legit static-miss, and (during a
+    // DDoS) junk traffic — so each gets its proportional share of whatever capacity served.
     const dynServed = appRps > 0 ? (appServed * dynRps) / appRps : 0;
-    const appStaticServed = appServed - dynServed;
+    const ddosServed = appRps > 0 ? (appServed * ddosThrough) / appRps : 0;
+    const appStaticServed = appServed - dynServed - ddosServed;
     let dynOk = dynServed;
     let dbMs = 1;
     for (const n of this.db) n.load = 0;
     if (c.database === 'rds') {
+      // ElastiCache sits in front of RDS: it absorbs a share of reads straight from
+      // memory, so only the rest (`dbLoad`) ever reaches the database.
+      if (c.cache) f.cacheHit = CACHE.hitRatio * (1 - Math.exp(-(this.t - this.cacheSince) / CACHE.warmTime));
+      const cacheServed = dynServed * f.cacheHit;
+      const dbLoad = dynServed - cacheServed;
       const p = this.db.find((n) => n.role === 'primary' && n.state === 'ok');
       if (!p) {
-        dynOk = 0;
-        f.dbFail = dynServed > 0 ? 1 : 0;
-        f.dbTarget = (this.db.find((n) => n.role === 'primary') || this.db[0] || {}).id || null;
-      } else {
-        const rho = dynServed / RDS.capacity;
-        p.load = rho;
-        dynOk = Math.min(dynServed, RDS.capacity);
+        // the cache itself is independent of RDS, so cached reads keep working even
+        // while the database is down
+        dynOk = cacheServed;
         f.dbFail = dynServed > 0 ? 1 - dynOk / dynServed : 0;
-        dbMs = RDS.queryMs * queue(rho);
+        f.dbTarget = (this.db.find((n) => n.role === 'primary') || this.db[0] || {}).id || null;
+        dbMs = CACHE.queryMs;
+      } else {
+        const rho = dbLoad / RDS.capacity;
+        p.load = rho;
+        const dbOk = Math.min(dbLoad, RDS.capacity);
+        dynOk = cacheServed + dbOk;
+        f.dbFail = dynServed > 0 ? 1 - dynOk / dynServed : 0;
+        dbMs = dynServed > 0 ? (cacheServed * CACHE.queryMs + dbOk * RDS.queryMs * queue(rho)) / dynServed : RDS.queryMs * queue(rho);
         f.dbTarget = p.id;
       }
     } else if (c.database === 'dynamodb') {
       dbMs = DDB.queryMs;
       f.dbTarget = 'dynamodb';
+    }
+    // SQL injection: a share of dynamic requests carries a malicious payload aimed at the
+    // database. Only a WAF rule (it inspects the request content) catches this — DynamoDB
+    // has no SQL to inject into, so it is immune by construction either way.
+    if (c.database === 'rds' && this._sqliActive) {
+      const blocked = c.waf ? SQLI.mitigation : 0;
+      f.sqliFail = SQLI.maliciousShare * (1 - blocked);
+      dynOk *= Math.max(0, 1 - f.sqliFail);
     }
 
     // requests whose outside API call (payment, email…) found no way out fail as well
@@ -954,6 +1016,7 @@ export class Simulation {
       ec2: c.compute === 'ec2' ? ec2Count * EC2.costPerHour : 0,
       elb: c.compute === 'ec2' && c.elb ? ELB.costPerHour + f.appRps * ELB.lcuPerRps * ELB.lcuCost : 0,
       rds: c.database === 'rds' ? this.db.length * RDS.costPerHour : 0,
+      cache: c.database === 'rds' && c.cache ? CACHE.costPerHour : 0,
       dynamodb: c.database === 'dynamodb' ? perHour(r.dynOk) * DDB.costPerMillion : 0,
       lambda: c.compute === 'lambda' ? perHour(r.appServed) * LAMBDA.costPerMillion : 0,
       apigw: c.compute === 'lambda' ? perHour(r.allowed) * APIGW.costPerMillion : 0,
@@ -962,6 +1025,8 @@ export class Simulation {
       route53: c.route53 ? R53.costPerHour + perHour(f.rps * R53.queryRatio) * R53.costPerMillion : 0,
       // hourly per gateway + per GB processed
       nat: this.nat.length * NAT.costPerHour + ((r.natRps * NAT.kbPerCall * 3600) / 1e6) * NAT.costPerGB,
+      waf: c.waf ? WAF.costPerHour + perHour(f.rps) * WAF.costPerMillion : 0,
+      // Shield Standard is free — only Shield Advanced costs money, not modelled here
     };
     m.costBreakdown = b;
     m.cost = Object.values(b).reduce((x, y) => x + y, 0);
@@ -1163,6 +1228,45 @@ export class Simulation {
     return true;
   }
 
+  // DDoS/SQL injection run on their own 'attack' timer tag, separate from 'traffic' (spike/
+  // night), so an attack can overlap a traffic scenario without cancelling its reversion.
+  _ddos() {
+    this._startScenario('ddos', {});
+    this._clearTimers('attack');
+    this._ddosRps = DDOS.floodRps;
+    this._emit('ddos', 'error', `Một mạng lưới botnet dội ${Math.round(DDOS.floodRps).toLocaleString('vi-VN')} request rác/giây vào hệ thống — một cuộc tấn công DDoS.`);
+    this._schedule(
+      DDOS.hold,
+      () => {
+        this._ddosRps = 0;
+        this._emit('ddosEnd', 'info', 'Đợt tấn công DDoS kết thúc.');
+      },
+      'attack',
+    );
+    return true;
+  }
+
+  _sqlInjection() {
+    const c = this.config;
+    if (c.database === 'none') {
+      this._emit('noop', 'warn', 'Kiến trúc này chưa có database riêng — không có gì để SQL injection nhắm tới.');
+      return false;
+    }
+    this._startScenario('sqlInjection', {});
+    this._clearTimers('attack');
+    this._sqliActive = true;
+    this._emit('sqlInjection', 'error', 'Kẻ tấn công gửi hàng loạt request chứa mã SQL độc hại nhắm vào database.');
+    this._schedule(
+      SQLI.hold,
+      () => {
+        this._sqliActive = false;
+        this._emit('sqlInjectionEnd', 'info', 'Đợt tấn công SQL injection kết thúc.');
+      },
+      'attack',
+    );
+    return true;
+  }
+
   _repair() {
     if (this.scenario) this._finishScenario(true);
     this.lesson = null;
@@ -1215,8 +1319,11 @@ export class Simulation {
     }
     for (const n of this.nat) n.state = 'ok';
     this._clearTimers('traffic');
+    this._clearTimers('attack');
     this.night = false;
     this.targetUsers = USERS.normal;
+    this._ddosRps = 0;
+    this._sqliActive = false;
     this._apply(this.config, {});
     this._emit('repair', 'success', 'Đã khôi phục: mọi AZ hoạt động, lượng truy cập trở về bình thường.');
     return true;
@@ -1255,6 +1362,10 @@ export class Simulation {
       costMin: this.metrics.cost,
       dbMaxLoad: 0,
       edgeShareMax: 0,
+      cacheHitMax: 0,
+      ddosRawMax: 0,
+      ddosThroughMax: 0,
+      sqliFailMax: 0,
       primaryAz: primary ? primary.az : null,
       natAz: this.nat[0] ? this.nat[0].az : null,
       dbPrimaryAz: dbPrimary ? dbPrimary.az : null,
@@ -1284,6 +1395,10 @@ export class Simulation {
     for (const n of this.db) sc.dbMaxLoad = Math.max(sc.dbMaxLoad, n.load);
     const f = this.flows;
     if (f.rps > 0) sc.edgeShareMax = Math.max(sc.edgeShareMax, f.served.edge / f.rps);
+    sc.cacheHitMax = Math.max(sc.cacheHitMax, f.cacheHit);
+    sc.ddosRawMax = Math.max(sc.ddosRawMax, f.ddosRps);
+    sc.ddosThroughMax = Math.max(sc.ddosThroughMax, f.ddosRps - f.ddosBlocked);
+    sc.sqliFailMax = Math.max(sc.sqliFailMax, f.sqliFail);
     // overloaded even though Auto Scaling already runs every instance it is allowed
     const c = this.config;
     if (c.compute === 'ec2' && c.asg && f.avgCpu > 1) {

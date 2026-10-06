@@ -8,6 +8,8 @@ export const ACTION_TITLE = {
   spike: '1 triệu người dùng ùa vào',
   dbFail: 'Database gặp sự cố',
   night: 'Đêm khuya vắng khách',
+  ddos: 'Tấn công DDoS',
+  sqlInjection: 'Tấn công SQL injection',
 };
 
 const pct = (x) => {
@@ -179,8 +181,11 @@ export function evaluateLesson(sc) {
         info('Chi phí Lambda và API Gateway tăng theo số request: dùng bao nhiêu trả bấy nhiêu.');
       }
       if (cfg.database === 'rds') {
-        if (sc.dbMaxLoad > 0.8) {
+        if (cfg.cache) {
+          good(`ElastiCache hấp thụ khoảng ${pct(sc.cacheHitMax)} lượt đọc ngay từ bộ nhớ, RDS chỉ còn chịu tải đỉnh ${pct(sc.dbMaxLoad)}.`);
+        } else if (sc.dbMaxLoad > 0.8) {
           info(`Database RDS chịu tải tới ${pct(sc.dbMaxLoad)} — sắp thành nút thắt cổ chai. Thực tế có thể thêm Read Replica hoặc bộ nhớ đệm (ElastiCache).`);
+          suggest('Bật ElastiCache', { cache: true });
         } else good('RDS vẫn đủ sức xử lý truy vấn.');
       } else if (cfg.database === 'dynamodb') {
         good('DynamoDB (chế độ on-demand) tự tăng năng lực đọc/ghi theo lượng truy cập.');
@@ -206,6 +211,7 @@ export function evaluateLesson(sc) {
         suggest('Bật RDS Multi-AZ', { rdsMultiAz: true });
       }
       if (cfg.s3 || cfg.cloudfront) good('Phần file tĩnh (S3/CloudFront) vẫn được phục vụ bình thường.');
+      if (cfg.cache) good('ElastiCache không phụ thuộc vào RDS: các lượt đọc đã có trong cache vẫn trả lời bình thường dù database đang sự cố.');
       break;
     }
 
@@ -229,6 +235,39 @@ export function evaluateLesson(sc) {
       }
       break;
     }
+
+    case 'ddos': {
+      const ddosBlockedShare = sc.ddosRawMax > 0 ? 1 - sc.ddosThroughMax / sc.ddosRawMax : 0;
+      if (cfg.shield) {
+        good(`AWS Shield hấp thụ khoảng ${pct(ddosBlockedShare)} lưu lượng tấn công ngay ở tầng mạng — đây là công cụ chuyên trị DDoS.`);
+        if (cfg.waf) info('WAF cũng góp phần nhờ rate-based rule, nhưng Shield mới là lớp chặn chính cho DDoS.');
+      } else if (cfg.waf) {
+        bad(`WAF một mình chỉ chặn được khoảng ${pct(ddosBlockedShare)} request rác nhờ rate-based rule — không phải công cụ chuyên trị DDoS.`);
+        info('AWS Shield mới là lớp phòng thủ DDoS chuyên dụng (tầng mạng), nên dùng cùng WAF.');
+        suggest('Bật AWS Shield', { shield: true });
+      } else {
+        bad('Không có Shield lẫn WAF: toàn bộ request rác dội thẳng vào ELB/EC2, chiếm hết công suất của cả người dùng thật.');
+        suggest('Bật AWS Shield + WAF', { shield: true, waf: true });
+      }
+      if (ec2 && !cfg.asg) info('Không có Auto Scaling thì dù chặn được DDoS, hệ thống vẫn không tự thêm máy khi traffic thật tăng theo.');
+      break;
+    }
+
+    case 'sqlInjection': {
+      if (cfg.database === 'none') {
+        info('Kiến trúc chưa có database nên đây chỉ là tình huống giả định.');
+      } else if (cfg.database === 'dynamodb') {
+        good('DynamoDB không dùng câu lệnh SQL nên về bản chất miễn nhiễm với kiểu SQL injection cổ điển này.');
+      } else if (cfg.waf) {
+        good('WAF kiểm tra nội dung từng request và chặn gần hết các payload SQL injection trước khi chạm tới RDS.');
+      } else {
+        bad(`Không có WAF: khoảng ${pct(sc.sqliFailMax)} request động bị ảnh hưởng — mã SQL độc hại đi thẳng tới RDS, dữ liệu có nguy cơ bị lộ hoặc sửa.`);
+        info('AWS Shield không giúp được vụ này — Shield chỉ nhìn lưu lượng mạng, không đọc nội dung request như WAF.');
+        suggest('Bật AWS WAF', { waf: true });
+      }
+      break;
+    }
+
     default:
       break;
   }

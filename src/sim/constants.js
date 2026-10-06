@@ -44,6 +44,19 @@ export const DDB = { queryMs: 6, costPerMillion: 0.225 };
 export const LAMBDA = { duration: 0.2, limit: 1000, warmMs: 40, coldMs: 400, keepWarm: 6, costPerMillion: 0.62 };
 export const APIGW = { limit: 10_000, ms: 10, costPerMillion: 1.0 };
 export const CF = { hitRatio: 0.9, warmTime: 3, edgeMs: 15, originMs: 30, costPerMillion: 1.2 };
+// ElastiCache: share of RDS reads a warmed-up cache absorbs before they reach the database
+export const CACHE = { hitRatio: 0.8, warmTime: 4, queryMs: 1, costPerHour: 0.017 };
+// DDoS: a flood of junk requests thrown at the edge (ELB/CloudFront), on top of real traffic.
+// Shield is the dedicated network-layer defence; a WAF rate-based rule helps some on its own
+// but is not a substitute for it.
+export const DDOS = { floodRps: 15_000, hold: 24, shieldMitigation: 0.97, wafOnlyMitigation: 0.5 };
+// SQL injection: a share of dynamic requests carry a malicious payload aimed at the database.
+// Only a WAF rule (inspecting the request body) can catch this — Shield only looks at network
+// traffic volume, not content.
+export const SQLI = { maliciousShare: 0.45, mitigation: 0.95, hold: 20 };
+// WAF: a web ACL + rules, billed hourly plus per request. Shield Standard (DDoS protection) is
+// included free with every AWS account — only Shield Advanced costs money, not modelled here.
+export const WAF = { costPerHour: 0.007, costPerMillion: 0.6 };
 export const S3 = { ms: 25, costPerMillion: 0.4, storagePerHour: 0.003 };
 export const ELB = { ms: 2, costPerHour: 0.0225, lcuPerRps: 1 / 250, lcuCost: 0.008 };
 export const R53 = { costPerHour: 0.0007, queryRatio: 0.01, costPerMillion: 0.4 };
@@ -52,7 +65,7 @@ export const R53 = { costPerHour: 0.0007, queryRatio: 0.01, costPerMillion: 0.4 
 export const NAT = { outboundShare: 0.15, kbPerCall: 10, costPerHour: 0.059, costPerGB: 0.059 };
 
 // how long each scenario is watched before the lesson card appears (simulated seconds)
-export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26 };
+export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26 };
 export const SPIKE_HOLD = 30;
 export const NIGHT_HOLD = 18;
 

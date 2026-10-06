@@ -13,6 +13,8 @@ const ACTIONS = [
   { id: 'serverFail', icon: 'fire', title: 'Server hỏng', desc: 'một EC2 cháy nguồn', tone: 'bad' },
   { id: 'spike', icon: 'crowd', title: '1 triệu người', desc: 'cùng truy cập', tone: 'warn' },
   { id: 'dbFail', icon: 'dbx', title: 'Database sự cố', desc: 'ổ đĩa primary hỏng', tone: 'bad' },
+  { id: 'ddos', icon: 'ddos', title: 'Tấn công DDoS', desc: 'botnet dội request rác', tone: 'bad' },
+  { id: 'sqlInjection', icon: 'sqli', title: 'SQL injection', desc: 'request chứa mã độc', tone: 'bad' },
   { id: 'night', icon: 'moon', title: 'Đêm khuya', desc: 'chỉ còn 500 người', tone: 'info' },
   { id: 'repair', icon: 'wrench', title: 'Phục hồi', desc: 'sửa mọi thứ', tone: 'good' },
 ];
@@ -40,7 +42,7 @@ export function Actions({ onAction }) {
   const sc = snap.scenario;
 
   const disabled = (id) => {
-    if (id === 'dbFail') return config.database === 'none';
+    if (id === 'dbFail' || id === 'sqlInjection') return config.database === 'none';
     if (id === 'quake') return snap.az[az] !== 'ok';
     return false;
   };
@@ -72,7 +74,7 @@ export function Actions({ onAction }) {
 
       <div className="action-grid">
         {ACTIONS.map((a) => (
-          <button key={a.id} className={`action tone-${a.tone}${hint === a.id ? ' is-hinted' : ''}${sc?.action === a.id ? ' is-running' : ''}`} onClick={() => run(a.id)} disabled={disabled(a.id)} title={a.id === 'dbFail' && disabled(a.id) ? 'Cần có database (RDS hoặc DynamoDB)' : undefined}>
+          <button key={a.id} className={`action tone-${a.tone}${hint === a.id ? ' is-hinted' : ''}${sc?.action === a.id ? ' is-running' : ''}`} onClick={() => run(a.id)} disabled={disabled(a.id)} title={(a.id === 'dbFail' || a.id === 'sqlInjection') && disabled(a.id) ? 'Cần có database (RDS hoặc DynamoDB)' : undefined}>
             <span className="action-icon">
               <Icon name={a.icon} size={22} />
             </span>

@@ -8,8 +8,8 @@ import { createModel } from './models/index.js';
 import { COLOR } from './palette.js';
 
 const PERSISTENT = new Set(['state', 'show', 'hide', 'ghost', 'label', 'load', 'count', 'break', 'fix', 'quake']);
-// models whose "count" (people, Lambda environments, queued messages) starts at zero
-const COUNTED = new Set(['users', 'lambda', 'sqs']);
+// models whose "count" (people, Lambda environments, queued messages, ECS tasks) starts at zero
+const COUNTED = new Set(['users', 'lambda', 'sqs', 'ecs']);
 
 const v3 = (a) => (a ? new THREE.Vector3(a[0], a[1] ?? 0, a[2] ?? 0) : null);
 

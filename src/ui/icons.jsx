@@ -56,6 +56,20 @@ const GLYPH = {
     </>
   ),
   lambda: <path d="M7 4h3.2l7.8 16h-3.4l-3-6.6L8 20H4.6l5.6-10.2L8.9 7H7z" />,
+  ecs: (
+    <>
+      <rect x="2.5" y="12.5" width="8.5" height="7" rx="1" />
+      <rect x="13" y="12.5" width="8.5" height="7" rx="1" />
+      <rect x="7.75" y="4.5" width="8.5" height="7" rx="1" />
+      <path d="M5.3 15v2M8.2 15v2M15.8 15v2M18.7 15v2M10.5 7v2M13.5 7v2" />
+    </>
+  ),
+  elasticache: (
+    <>
+      <rect x="4" y="4" width="16" height="16" rx="3" />
+      <path d="M13 7L8.5 13.2H12l-.8 3.8 4.3-6.2H12z" fill="currentColor" stroke="none" />
+    </>
+  ),
   apigw: (
     <>
       <path d="M4 20V8.5L12 4l8 4.5V20" />
@@ -98,6 +112,32 @@ const GLYPH = {
       <path d="M12 12.3v3.4" />
     </>
   ),
+  cognito: (
+    <>
+      <rect x="2.5" y="5" width="19" height="14" rx="2" />
+      <circle cx="8.5" cy="10.5" r="2.2" />
+      <path d="M5 16c.6-1.6 1.9-2.5 3.5-2.5s2.9.9 3.5 2.5M14.5 9.5h4M14.5 13h3" />
+    </>
+  ),
+  secrets: (
+    <>
+      <circle cx="8" cy="15.5" r="4" />
+      <circle cx="8" cy="15.5" r="1.2" />
+      <path d="M10.9 12.6L20 3.5M16.5 7l2.5 2.5M14 9.5l2 2" />
+    </>
+  ),
+  waf: (
+    <>
+      <path d="M12 3l7 3v5.5c0 4.3-3 7.8-7 9.5-4-1.7-7-5.2-7-9.5V6z" />
+      <path d="M9 12.5l2 2 4-4.2" />
+    </>
+  ),
+  shield: (
+    <>
+      <path d="M12 3l7 3v5.5c0 4.3-3 7.8-7 9.5-4-1.7-7-5.2-7-9.5V6z" />
+      <path d="M9.3 11.2l-1.8 1 4.5 2.6 4.5-7-1.7-1-3.3 5.1z" fill="currentColor" stroke="none" />
+    </>
+  ),
   cloudwatch: (
     <>
       <rect x="3" y="4" width="18" height="13" rx="2" />
@@ -110,6 +150,13 @@ const GLYPH = {
       <rect x="2.5" y="8" width="5" height="8" rx="1" />
       <rect x="9.5" y="8" width="5" height="8" rx="1" />
       <path d="M16.5 12h5M19 9.5l2.5 2.5-2.5 2.5" />
+    </>
+  ),
+  sns: (
+    <>
+      <path d="M3.5 10h3l8-4.5v13l-8-4.5h-3z" />
+      <path d="M7 14.5l1 4.5h2.2l-.8-3.5" />
+      <path d="M17.5 9.5a3.5 3.5 0 0 1 0 5M19.8 7a7 7 0 0 1 0 10" />
     </>
   ),
   users: (
@@ -161,6 +208,18 @@ const UI = {
       <ellipse cx="10" cy="5.5" rx="6.5" ry="2.4" />
       <path d="M3.5 5.5v12.5c0 1.3 2.9 2.4 6.5 2.4M16.5 5.5v5M3.5 11.5c0 1.3 2.9 2.4 6.5 2.4" />
       <path d="M15 15l5 5M20 15l-5 5" />
+    </>
+  ),
+  ddos: (
+    <>
+      <circle cx="12" cy="12" r="1.8" fill="currentColor" />
+      <path d="M12 2.5v5M12 16.5v5M2.5 12h5M16.5 12h5M5.4 5.4l3.2 3.2M15.4 15.4l3.2 3.2M18.6 5.4l-3.2 3.2M8.6 15.4l-3.2 3.2" />
+    </>
+  ),
+  sqli: (
+    <>
+      <ellipse cx="12" cy="13" rx="5" ry="6" />
+      <path d="M12 7V4M9.2 5.2L7.5 3M14.8 5.2L16.5 3M5 11H2M22 11h-3M5 16H2.5M21.5 16H19M7.2 18.5L4.5 21M16.8 18.5l2.7 2.5" />
     </>
   ),
   moon: <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />,

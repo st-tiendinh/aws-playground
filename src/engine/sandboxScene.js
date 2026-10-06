@@ -22,6 +22,9 @@ export const LAYOUT = {
   s3: [-10, 0, 10],
   lambda: [8, 0, 0],
   dynamodb: [18.6, 0, 0],
+  cache: [22.6, 0, 0],
+  waf: [-14, 0, 3],
+  shield: [-14, 0, -3],
   rdsX: 17.7,
   natX: 1.8,
   external: [-15, 0, -20],
@@ -55,6 +58,9 @@ const TITLES = {
   apigw: ['API Gateway', ''],
   lambda: ['Lambda', ''],
   dynamodb: ['DynamoDB', 'NoSQL'],
+  cache: ['ElastiCache', 'in-memory'],
+  waf: ['AWS WAF', 'lọc request'],
+  shield: ['AWS Shield', 'chống DDoS'],
 };
 
 const pickWeighted = (list) => {
@@ -202,6 +208,9 @@ export class SandboxScene {
     this._ensure('apigw', !ec2, () => createModel('apigw', { id: 'apigw', position: L.apigw }));
     this._ensure('lambda', !ec2, () => createModel('lambda', { id: 'lambda', position: L.lambda }));
     this._ensure('dynamodb', c.database === 'dynamodb', () => createModel('dynamodb', { id: 'dynamodb', position: L.dynamodb }));
+    this._ensure('cache', c.database === 'rds' && c.cache, () => createModel('cache', { id: 'cache', position: L.cache }));
+    this._ensure('waf', c.waf, () => createModel('waf', { id: 'waf', position: L.waf }));
+    this._ensure('shield', c.shield, () => createModel('shield', { id: 'shield', position: L.shield }));
     this._ensure('asg', ec2 && c.asg, () => {
       const m = createModel('outline', { id: 'asg', kind: 'asg', category: 'compute', w: L.asg.w, d: L.asg.d, r: 1.2, color: CAT_COLOR.compute, fill: 0.07, speed: 0.6, thick: 0.16, position: [L.asg.x, AZ_Y + 0.02, L.asg.z] });
       m.setLabel('Auto Scaling Group', '', { color: CAT_COLOR.compute, y: 0.4 });
@@ -311,6 +320,18 @@ export class SandboxScene {
     this.users.setLabelState(mood === 'angry' ? 'bad' : mood === 'slow' ? 'warn' : null);
     const cf = this.node('cloudfront');
     if (cf) cf.setLabelSub(`CDN · cache hit ${Math.round(f.cfHit * 100)}%`);
+    const cache = this.node('cache');
+    if (cache) cache.setLabelSub(`cache hit ${Math.round(f.cacheHit * 100)}% · giảm tải RDS`);
+    const waf = this.node('waf');
+    if (waf) {
+      waf.setLabelSub(f.sqliFail > 0.01 ? `đang chặn SQL injection` : 'đang lọc request');
+      waf.setLabelState(f.sqliFail > 0.01 ? 'warn' : null);
+    }
+    const shield = this.node('shield');
+    if (shield) {
+      shield.setLabelSub(f.ddosBlocked > 1 ? `chặn ${Math.round(f.ddosBlocked).toLocaleString('vi-VN')} req/s DDoS` : 'đang giám sát');
+      shield.setLabelState(f.ddosBlocked > 1 ? 'warn' : null);
+    }
     const elb = this.node('elb');
     if (elb) {
       const healthy = sim.instances.filter((i) => i.registered && i.state === 'running').length;
@@ -658,6 +679,29 @@ export class SandboxScene {
         this.sfx?.play('crowd');
         break;
       }
+      case 'ddos': {
+        const a = pos('shield') || pos('cloudfront') || pos('elb') || this.users.group.position;
+        this.fx.callout(new THREE.Vector3(a.x, a.y + 2.6, a.z), 'DDoS!', { kind: 'bad', dur: 3, rise: 2 });
+        this.fx.sparks(a, { n: 30, speed: 6 });
+        this.sfx?.play('crowd');
+        break;
+      }
+      case 'ddosEnd':
+        this.sfx?.play('good');
+        break;
+      case 'sqlInjection': {
+        const primary = this.sim.db.find((d) => d.role === 'primary');
+        const a = pos('waf') || (primary && pos('rds:' + primary.id));
+        if (a) {
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.2, a.z), 'SQL injection!', { kind: 'bad', dur: 2.8 });
+          this.fx.sparks(a, { n: 20, speed: 5 });
+        }
+        this.sfx?.play('alert');
+        break;
+      }
+      case 'sqlInjectionEnd':
+        this.sfx?.play('good');
+        break;
       case 'siteDown':
         this.sfx?.play('alarm');
         break;
@@ -717,6 +761,9 @@ export class SandboxScene {
       apigw: [L.apigw, 11],
       lambda: [L.lambda, 14],
       dynamodb: [L.dynamodb, 11],
+      cache: [L.cache, 11],
+      waf: [L.waf, 11],
+      shield: [L.shield, 11],
       asg: [[L.asg.x, 0, L.asg.z], 30],
       nat: [[L.natX, 0, 0], 26],
       external: [L.external, 14],
