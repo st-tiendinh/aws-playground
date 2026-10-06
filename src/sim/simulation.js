@@ -1,7 +1,8 @@
 // Sandbox simulation: a small model of a web app running on AWS. Every step it routes the
 // incoming traffic through the chosen architecture (CDN → load balancer → servers →
 // database), works out load, failures, latency and cost, and runs the AWS behaviours a
-// beginner should see: health checks, Auto Scaling, RDS Multi-AZ failover, Lambda scaling.
+// beginner should see: health checks, Auto Scaling, RDS Multi-AZ failover, Lambda scaling,
+// an SQS backlog draining in the background, a restore from AWS Backup.
 // Pure JS (no three.js) so it runs under Node tests; the 3D scene only reads its state.
 import {
   APIGW,
@@ -9,6 +10,7 @@ import {
   AZ_CODE,
   AZ_IDS,
   AZ_LABEL,
+  BACKUP,
   BUDGET,
   CACHE,
   CF,
@@ -16,6 +18,7 @@ import {
   DDOS,
   EC2,
   ELB,
+  EXT,
   HEALTH,
   LAMBDA,
   NAT,
@@ -26,15 +29,19 @@ import {
   REGION_MS,
   REQ_PER_USER,
   S3,
+  S3APP,
   SCENARIO_TIME,
   SPIKE_HOLD,
   SQLI,
+  SQS,
   STATIC_SHARE,
   STEP,
   USERS,
+  VPCE,
   WAF,
+  WIPE,
 } from './constants.js';
-import { evaluateLesson } from './lessons.js';
+import { evaluateLesson, natlessFailures } from './lessons.js';
 
 export const DEFAULT_CONFIG = {
   route53: false,
@@ -54,12 +61,16 @@ export const DEFAULT_CONFIG = {
   waf: false, // AWS WAF: app-layer rules (blocks SQL injection, rate-based rules)
   shield: false, // AWS Shield: dedicated network-layer DDoS defence
   budget: 0, // AWS Budgets: monthly budget in $ (0 = none), alerts on the forecast
+  queue: false, // SQS + Lambda worker: orders are queued and processed in the background
+  vpce: false, // VPC Endpoints: a private fleet reaches S3 (Gateway) and SQS (Interface) without NAT
+  backup: false, // AWS Backup: daily backups + point-in-time recovery of the data store
 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 // queueing delay multiplier: requests wait longer as a resource gets busy
 const queue = (rho) => 1 / (1 - Math.min(rho, 0.9));
 const perHour = (rps) => (rps * 3600) / 1e6; // requests/s → millions of requests per hour
+const gbPerHour = (kbps) => (kbps * 3600) / 1e6; // KB/s → GB per hour
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -76,7 +87,7 @@ export function normalizeConfig(c = {}) {
   const out = { ...DEFAULT_CONFIG, ...c, ec2: { ...DEFAULT_CONFIG.ec2, ...(c.ec2 || {}) } };
   out.compute = out.compute === 'lambda' ? 'lambda' : 'ec2';
   out.database = out.database === 'rds' || out.database === 'dynamodb' ? out.database : 'none';
-  for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz', 'cache', 'waf', 'shield']) out[k] = !!out[k];
+  for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz', 'cache', 'waf', 'shield', 'queue', 'vpce', 'backup']) out[k] = !!out[k];
   for (const az of AZ_IDS) out.ec2[az] = clamp(Math.round(out.ec2[az] || 0), 0, EC2.maxPerAz);
   if (out.compute === 'ec2' && !out.asg && out.ec2.a + out.ec2.b === 0) out.ec2.a = 1;
   out.budget = BUDGET.options.includes(Number(out.budget)) ? Number(out.budget) : 0;
@@ -94,6 +105,8 @@ export function normalizeConfig(c = {}) {
   // Gateway only makes sense for a private fleet
   out.appSubnet = out.appSubnet === 'private' && out.compute === 'ec2' && out.elb ? 'private' : 'public';
   out.nat = out.appSubnet === 'private' && (out.nat === 'single' || out.nat === 'perAz') ? out.nat : 'none';
+  // a public fleet reaches S3 and SQS directly: VPC Endpoints only matter for a private one
+  if (out.appSubnet !== 'private') out.vpce = false;
   return out;
 }
 
@@ -107,6 +120,9 @@ const NAMES = {
   cache: 'ElastiCache',
   waf: 'AWS WAF',
   shield: 'AWS Shield',
+  queue: 'SQS + Lambda worker',
+  vpce: 'VPC Endpoint (S3, SQS)',
+  backup: 'AWS Backup',
 };
 
 const instName = (i) => `EC2 #${i.n}`;
@@ -187,6 +203,10 @@ export class Simulation {
         return this._ddos();
       case 'sqlInjection':
         return this._sqlInjection();
+      case 'paymentDown':
+        return this._paymentDown();
+      case 'dataDelete':
+        return this._dataDelete();
       case 'repair':
         return this._repair();
       default:
@@ -236,6 +256,10 @@ export class Simulation {
       ddosRps: this.flows.ddosRps,
       ddosBlocked: this.flows.ddosBlocked,
       sqliFail: this.flows.sqliFail,
+      queue: this.config.queue ? { depth: this.queue.depth, inRate: this.flows.queueIn, outRate: this.flows.queueOut } : null,
+      extDown: this.extDown,
+      data: { wiped: this.data.wiped, restoring: this.data.restoring, remaining: this.data.restoring ? Math.max(0, this.data.timer) : 0, lost: this.data.lost },
+      s3App: { rps: this.flows.s3AppRps, viaNat: this.flows.s3NatRps, viaEndpoint: this.flows.s3VpceRps, failing: this.flows.awsFailRps },
       scenario: sc ? { action: sc.action, az: sc.az, remaining: Math.max(0, sc.end - this.t) } : null,
     };
   }
@@ -261,6 +285,9 @@ export class Simulation {
     this.cacheSince = -100;
     this._ddosRps = 0;
     this._sqliActive = false;
+    this.extDown = false; // the payment provider / email API is down
+    this.queue = { depth: 0, warned: false }; // SQS backlog: messages waiting for the worker
+    this.data = { wiped: false, restoring: false, timer: 0, lost: false, hadBackup: false };
     this.asgDesired = 0;
     this._overSince = null;
     this._lastScaleIn = -100;
@@ -270,7 +297,7 @@ export class Simulation {
     this._maxWarned = false;
     this._noAzWarned = false;
     this._rebalancing = false;
-    this.flows = { rps: 0, targets: [], cfHit: 0, cacheHit: 0, ddosRps: 0, ddosBlocked: 0, sqliFail: 0, appRps: 0, avgCpu: 0 };
+    this.flows = { rps: 0, targets: [], cfHit: 0, cacheHit: 0, ddosRps: 0, ddosBlocked: 0, sqliFail: 0, appRps: 0, avgCpu: 0, queueIn: 0, queueOut: 0, s3AppRps: 0, s3NatRps: 0, s3VpceRps: 0, awsFailRps: 0 };
     this.metrics = {
       success: 1,
       successRaw: 1,
@@ -414,8 +441,11 @@ export class Simulation {
       const label = { none: 'không dùng NAT Gateway', single: '1 NAT Gateway (ở AZ A) dùng chung', perAz: 'mỗi AZ một NAT Gateway' };
       this._emit('config', 'info', `Đường ra Internet của EC2: ${label[next.nat]}.`);
     }
-    if (next.appSubnet === 'private' && next.nat === 'none' && (prev.appSubnet !== 'private' || prev.nat !== 'none')) {
-      this._emit('noNat', 'error', 'EC2 ở private subnet chưa có NAT Gateway → không gọi được API bên ngoài (thanh toán, email…), các request đó bị lỗi.');
+    // what a private fleet without NAT can no longer reach — re-announced when that changes
+    const natless = (c) => (c.appSubnet === 'private' && c.nat === 'none' ? natlessFailures(c) : []);
+    const lost = natless(next);
+    if (lost.length && lost.join() !== natless(prev).join()) {
+      this._emit('noNat', 'error', `EC2 ở private subnet chưa có NAT Gateway → không gọi được ${lost.join(', ')}; các request cần tới đó bị lỗi.`);
     }
     if (prev.database !== next.database) {
       const label = { none: 'không dùng database riêng', rds: 'database RDS', dynamodb: 'database DynamoDB' };
@@ -552,6 +582,7 @@ export class Simulation {
     this._runTimers();
     this._traffic(dt);
     this._lifecycle(dt);
+    this._restoreTick(dt);
     this._hcClock += dt;
     if (this._hcClock >= HEALTH.interval - 1e-9) {
       this._hcClock = 0;
@@ -653,6 +684,18 @@ export class Simulation {
         });
       }
     }
+  }
+
+  // AWS Backup restore in progress: the data is back once the new copy is ready
+  _restoreTick(dt) {
+    const d = this.data;
+    if (!d.restoring) return;
+    d.timer -= dt;
+    if (d.timer > 0) return;
+    d.restoring = false;
+    d.wiped = false;
+    d.timer = 0;
+    this._emit('restoreDone', 'success', 'Khôi phục xong: dữ liệu trở về thời điểm ngay trước lệnh xoá, ứng dụng chuyển sang bản vừa dựng lại.');
   }
 
   _healthChecks() {
@@ -823,6 +866,17 @@ export class Simulation {
       outRps: 0,
       outFailRps: 0,
       natMode: c.nat,
+      priv: c.compute === 'ec2' && c.appSubnet === 'private',
+      queue: c.queue,
+      vpce: c.vpce,
+      extDown: this.extDown,
+      queueIn: 0,
+      queueOut: 0,
+      s3AppShare: c.s3 && c.compute === 'ec2' ? S3APP.share : 0,
+      s3AppRps: 0,
+      s3NatRps: 0,
+      s3VpceRps: 0,
+      awsFailRps: 0,
       served: {},
     };
 
@@ -852,11 +906,20 @@ export class Simulation {
     let appServed = 0;
     let appMsSum = 0;
     let entryMs = 0;
-    // part of each dynamic request that calls an outside API (needs a way out to the Internet)
-    const outPerReq = appRps > 0 ? (dynRps / appRps) * NAT.outboundShare : 0;
-    let outRps = 0;
+    // what a dynamic request reaches beyond the app tier: an outside API (payment, email…) and,
+    // when there is a bucket, S3 (product photos, uploads)
+    const dynFrac = appRps > 0 ? dynRps / appRps : 0;
+    const outPerReq = dynFrac * NAT.outboundShare;
+    const s3PerReq = c.s3 ? dynFrac * S3APP.share : 0;
+    let outRps = 0; // outside API calls the app tier makes itself, inside the request
     let outFail = 0;
-    let natRps = 0;
+    let natRps = 0; // …of which through a NAT Gateway
+    let enqRps = 0; // orders handed to SQS instead
+    let enqNatRps = 0;
+    let awsFail = 0; // S3 / SQS calls that found no way out
+    let s3AppRps = 0;
+    let s3NatRps = 0;
+    let s3VpceRps = 0;
     for (const i of this.instances) {
       i.load = 0;
       if (i.state === 'running') i.cpu = 0;
@@ -883,9 +946,27 @@ export class Simulation {
         const served = Math.min(share, EC2.capacity);
         appServed += served;
         appMsSum += served * EC2.procMs * queue(i.cpu);
-        outRps += served * outPerReq;
-        if (out.via) natRps += served * outPerReq;
-        if (!out.ok) outFail += served * outPerReq;
+        const priv = c.appSubnet === 'private';
+        const calls = served * outPerReq;
+        if (c.queue) {
+          // the order just goes into SQS — an AWS API, reached through the SQS Interface
+          // Endpoint, the NAT Gateway, or directly from a public subnet
+          if (!priv || c.vpce || out.ok) enqRps += calls;
+          else awsFail += calls;
+          if (priv && !c.vpce && out.via) enqNatRps += calls;
+        } else {
+          outRps += calls;
+          if (out.via) natRps += calls;
+          if (!out.ok || this.extDown) outFail += calls;
+        }
+        // S3 from a private subnet: free through the Gateway Endpoint, otherwise via NAT
+        const s3Calls = served * s3PerReq;
+        s3AppRps += s3Calls;
+        if (priv && c.vpce) s3VpceRps += s3Calls;
+        else if (priv) {
+          if (out.via) s3NatRps += s3Calls;
+          if (!out.ok) awsFail += s3Calls;
+        }
         f.targets.push({ id: i.id, w: 1 / targets.length, fail: share > 0 ? 1 - served / share : 0, out });
       }
       const running = this.instances.filter((i) => i.state === 'running').length;
@@ -913,7 +994,14 @@ export class Simulation {
       lam.coldFrac = reqs > 0 ? Math.min(1, created / reqs) : 0;
       lam.coldRate = dt > 0 ? created / dt : 0;
       appMsSum = appServed * (LAMBDA.warmMs + lam.coldFrac * LAMBDA.coldMs);
-      outRps = appServed * outPerReq; // Lambda outside a VPC reaches the Internet directly
+      // Lambda outside a VPC reaches the Internet, S3 and SQS directly
+      const calls = appServed * outPerReq;
+      if (c.queue) enqRps += calls;
+      else {
+        outRps = calls;
+        if (this.extDown) outFail += calls;
+      }
+      s3AppRps = appServed * s3PerReq;
       if (f.lambdaFail > 0.01 && !this._lambdaWarned) {
         this._lambdaWarned = true;
         this._emit(
@@ -927,6 +1015,29 @@ export class Simulation {
         this._emit('gwThrottle', 'error', 'API Gateway chạm giới hạn 10.000 request/giây → trả lỗi 429 Too Many Requests.');
       } else if (f.gwFail === 0) this._gwWarned = false;
     }
+
+    // SQS: the Lambda worker drains the backlog at its own pace. While the payment provider is
+    // down its calls fail, so the messages simply stay in the queue to be retried later.
+    let deqRps = 0;
+    if (c.queue) {
+      const q = this.queue;
+      if (!this.extDown) deqRps = Math.min(SQS.workerRate, enqRps + (dt > 0 ? q.depth / dt : 0));
+      if (dt > 0) {
+        q.depth = Math.max(0, q.depth + (enqRps - deqRps) * dt);
+        if (q.depth >= SQS.backlogWarn && !q.warned) {
+          q.warned = true;
+          this._emit('queueBacklog', 'warn', `SQS đang giữ ${Math.round(q.depth).toLocaleString('vi-VN')} đơn chờ xử lý — khách vẫn đặt hàng được, Lambda worker xử lý dần, không mất đơn nào.`);
+        } else if (q.warned && q.depth < 1) {
+          q.warned = false;
+          this._emit('queueDrained', 'success', 'Lambda worker đã xử lý hết hàng đợi SQS.');
+        }
+      }
+    } else {
+      this.queue.depth = 0;
+      this.queue.warned = false;
+    }
+    f.queueIn = enqRps;
+    f.queueOut = deqRps;
 
     // database tier (only the dynamic part needs it). appServed is shared fairly across every
     // kind of request hitting the app tier — legit dynamic, legit static-miss, and (during a
@@ -973,10 +1084,19 @@ export class Simulation {
       dynOk *= Math.max(0, 1 - f.sqliFail);
     }
 
-    // requests whose outside API call (payment, email…) found no way out fail as well
-    if (outFail > 0 && dynServed > 0) dynOk *= Math.max(0, 1 - outFail / dynServed);
+    // an accidental delete: most dynamic requests need rows that are gone until a restore
+    if (this.data.wiped) dynOk *= 1 - WIPE.share;
+    // requests whose outside API call (payment, email…) found no way out — or a provider that
+    // is down — fail as well, and so do the ones whose S3 / SQS call found no way out
+    if ((outFail > 0 || awsFail > 0) && dynServed > 0) dynOk *= Math.max(0, 1 - (outFail + awsFail) / dynServed);
     f.outRps = outRps;
     f.outFailRps = outFail;
+    f.awsFailRps = awsFail;
+    f.s3AppRps = s3AppRps;
+    f.s3NatRps = s3NatRps;
+    f.s3VpceRps = s3VpceRps;
+    // a synchronous outside call keeps the user waiting; dropping the order into SQS does not
+    const extMs = NAT.outboundShare * (c.queue ? SQS.enqueueMs : EXT.ms);
 
     const ok = edge + s3 + appStaticServed + dynOk;
     const appMs = appServed > 0 ? appMsSum / appServed : 0;
@@ -984,11 +1104,11 @@ export class Simulation {
     const s3Ms = c.cloudfront ? CF.edgeMs + CF.originMs + S3.ms : REGION_MS + S3.ms;
     const toApp = REGION_MS + cfPass + entryMs + appMs;
     const latencySum =
-      edge * CF.edgeMs + s3 * s3Ms + appStaticServed * toApp + dynOk * (toApp + dbMs);
+      edge * CF.edgeMs + s3 * s3Ms + appStaticServed * toApp + dynOk * (toApp + dbMs + extMs);
 
     f.served = { edge, s3, app: appServed, appStatic: appStaticServed, dyn: dynOk, total: ok };
     this.flows = f;
-    this._last = { ok, total: rps, latencySum, s3, dynOk, appServed, allowed: Math.min(appRps, APIGW.limit), natRps };
+    this._last = { ok, total: rps, latencySum, s3, dynOk, appServed, allowed: Math.min(appRps, APIGW.limit), natRps, enqRps, enqNatRps, deqRps, s3NatRps };
   }
 
   _metrics(dt) {
@@ -1039,8 +1159,13 @@ export class Simulation {
       s3: c.s3 ? S3.storagePerHour + perHour(r.s3) * S3.costPerMillion : 0,
       cloudfront: c.cloudfront ? perHour(f.rps) * CF.costPerMillion : 0,
       route53: c.route53 ? R53.costPerHour + perHour(f.rps * R53.queryRatio) * R53.costPerMillion : 0,
-      // hourly per gateway + per GB processed
-      nat: this.nat.length * NAT.costPerHour + ((r.natRps * NAT.kbPerCall * 3600) / 1e6) * NAT.costPerGB,
+      // hourly per gateway + per GB processed: outside API calls, SQS messages and S3 files
+      nat: this.nat.length * NAT.costPerHour + gbPerHour((r.natRps + r.enqNatRps) * NAT.kbPerCall + r.s3NatRps * S3APP.kbPerCall) * NAT.costPerGB,
+      // the S3 Gateway Endpoint is free; the SQS Interface Endpoint is billed per AZ-hour and per GB
+      vpce: c.vpce && c.queue ? AZ_IDS.length * VPCE.ifaceCostPerHour + gbPerHour(r.enqRps * NAT.kbPerCall) * VPCE.costPerGB : 0,
+      // SQS requests (send, receive, delete) + the Lambda worker invocations (batches of messages)
+      sqs: c.queue ? perHour(r.enqRps * SQS.callsPerMsg) * SQS.costPerMillion + perHour(r.deqRps / SQS.batch) * LAMBDA.costPerMillion : 0,
+      backup: c.backup ? BACKUP.costPerHour : 0,
       waf: c.waf ? WAF.costPerHour + perHour(f.rps) * WAF.costPerMillion : 0,
       // Shield Standard is free — only Shield Advanced costs money, not modelled here
     };
@@ -1112,8 +1237,11 @@ export class Simulation {
     for (const n of this.nat.filter((n) => n.az === az)) {
       n.state = 'failed';
       const other = AZ_LABEL[OTHER_AZ[az]];
-      if (this.config.nat === 'single') {
-        this._emit('natLost', 'error', `NAT Gateway duy nhất (ở ${AZ_LABEL[az]}) mất kết nối → EC2 ở ${other} cũng không ra được Internet (API thanh toán, email…).`, { az });
+      const lost = natlessFailures(this.config);
+      if (this.config.nat === 'single' && lost.length) {
+        this._emit('natLost', 'error', `NAT Gateway duy nhất (ở ${AZ_LABEL[az]}) mất kết nối → EC2 ở ${other} cũng không gọi được ${lost.join(', ')}.`, { az });
+      } else if (this.config.nat === 'single') {
+        this._emit('natLost', 'info', `NAT Gateway duy nhất (ở ${AZ_LABEL[az]}) mất theo AZ — nhưng EC2 không còn cần NAT nhờ SQS + VPC Endpoint.`, { az });
       } else {
         this._emit('natLost', 'info', `NAT Gateway ở ${AZ_LABEL[az]} mất theo AZ — EC2 ở ${other} vẫn ra Internet qua NAT của chính AZ đó.`, { az });
       }
@@ -1306,6 +1434,66 @@ export class Simulation {
     return true;
   }
 
+  // the payment provider and the email API go down for a while
+  _paymentDown() {
+    this._startScenario('paymentDown', {});
+    this._clearTimers('ext');
+    this.extDown = true;
+    this._emit('paymentDown', 'error', 'Đối tác thanh toán và dịch vụ email ngừng hoạt động — mọi lời gọi API ra ngoài đều lỗi.');
+    if (this.config.queue) {
+      this._emit('queueHold', 'info', 'Đơn hàng vẫn được nhận và nằm chờ trong SQS; Lambda worker sẽ thử lại khi đối tác hoạt động trở lại.');
+    }
+    this._schedule(
+      EXT.downHold,
+      () => {
+        this.extDown = false;
+        this._emit('paymentUp', 'success', 'Đối tác thanh toán hoạt động trở lại.');
+      },
+      'ext',
+    );
+    return true;
+  }
+
+  // a bad deploy runs DELETE against the production data. Replicas copy the delete at once
+  // (Multi-AZ, DynamoDB's copies); only a backup can bring the data back.
+  _dataDelete() {
+    const c = this.config;
+    if (c.compute === 'lambda' && c.database === 'none') {
+      this._emit('noop', 'warn', 'Kiến trúc này chưa lưu dữ liệu ở đâu cả — hãy thêm DynamoDB hoặc RDS trước.');
+      return false;
+    }
+    if (this.data.wiped) {
+      this._emit('noop', 'warn', 'Dữ liệu vẫn đang trong tình trạng bị xoá.');
+      return false;
+    }
+    this._startScenario('dataDelete', { hadBackup: c.backup });
+    this.data = { wiped: true, restoring: false, timer: 0, lost: false, hadBackup: c.backup };
+    const where = c.database === 'rds' ? 'database RDS' : c.database === 'dynamodb' ? 'bảng DynamoDB' : 'ổ đĩa EBS của EC2';
+    this._emit('dataDelete', 'error', `Một bản deploy lỗi chạy nhầm lệnh xoá trên ${where}: phần lớn đơn hàng và tài khoản biến mất!`);
+    if (c.database === 'rds' && c.rdsMultiAz) {
+      this._emit('replicatedDelete', 'warn', 'RDS Multi-AZ đồng bộ ngay lệnh xoá sang bản standby — standby cũng mất dữ liệu y hệt primary.');
+    } else if (c.database === 'dynamodb') {
+      this._emit('replicatedDelete', 'warn', 'DynamoDB nhân bản lệnh xoá sang mọi AZ ngay lập tức — bản sao nào cũng mất dữ liệu.');
+    }
+    this._schedule(
+      BACKUP.detectTime,
+      () => {
+        const d = this.data;
+        if (!d.wiped) return;
+        if (d.hadBackup) {
+          d.restoring = true;
+          d.timer = BACKUP.restoreTime;
+          this._emit('restoreStart', 'info', 'Phát hiện sự cố: khôi phục từ AWS Backup về thời điểm ngay trước lệnh xoá (point-in-time recovery)…');
+        } else {
+          d.lost = true;
+          this._emit('noBackup', 'error', 'Không có bản sao lưu nào: phần dữ liệu bị xoá đã mất vĩnh viễn.');
+        }
+      },
+      'data',
+    );
+    return true;
+  }
+
   _repair() {
     if (this.scenario) this._finishScenario(true);
     this.lesson = null;
@@ -1359,10 +1547,23 @@ export class Simulation {
     for (const n of this.nat) n.state = 'ok';
     this._clearTimers('traffic');
     this._clearTimers('attack');
+    this._clearTimers('ext');
+    this._clearTimers('data');
     this.night = false;
     this.targetUsers = USERS.normal;
     this._ddosRps = 0;
     this._sqliActive = false;
+    this.extDown = false;
+    if (this.data.wiped) {
+      this._emit(
+        this.data.hadBackup ? 'restoreDone' : 'dataGone',
+        this.data.hadBackup ? 'success' : 'warn',
+        this.data.hadBackup
+          ? 'Khôi phục xong từ AWS Backup: dữ liệu trở về thời điểm ngay trước lệnh xoá.'
+          : 'Website chạy lại với dữ liệu trống — phần đã xoá không lấy lại được vì không có bản sao lưu.',
+      );
+    }
+    this.data = { wiped: false, restoring: false, timer: 0, lost: false, hadBackup: false };
     this._apply(this.config, {});
     this._emit('repair', 'success', 'Đã khôi phục: mọi AZ hoạt động, lượng truy cập trở về bình thường.');
     return true;
@@ -1406,6 +1607,8 @@ export class Simulation {
       ddosRawMax: 0,
       ddosThroughMax: 0,
       sqliFailMax: 0,
+      queueMax: this.queue.depth,
+      natS3CostMax: 0,
       primaryAz: primary ? primary.az : null,
       natAz: this.nat[0] ? this.nat[0].az : null,
       dbPrimaryAz: dbPrimary ? dbPrimary.az : null,
@@ -1439,6 +1642,8 @@ export class Simulation {
     sc.ddosRawMax = Math.max(sc.ddosRawMax, f.ddosRps);
     sc.ddosThroughMax = Math.max(sc.ddosThroughMax, f.ddosRps - f.ddosBlocked);
     sc.sqliFailMax = Math.max(sc.sqliFailMax, f.sqliFail);
+    sc.queueMax = Math.max(sc.queueMax, this.queue.depth);
+    sc.natS3CostMax = Math.max(sc.natS3CostMax, gbPerHour(f.s3NatRps * S3APP.kbPerCall) * NAT.costPerGB);
     // overloaded even though Auto Scaling already runs every instance it is allowed
     const c = this.config;
     if (c.compute === 'ec2' && c.asg && f.avgCpu > 1) {
@@ -1460,6 +1665,8 @@ export class Simulation {
       !this.instances.some((i) => i.state === 'failed') &&
       !this.db.some((n) => n.state === 'failed') &&
       !this.nat.some((n) => n.state === 'failed') &&
+      !this.extDown &&
+      !this.data.wiped &&
       (this.metrics.status === 'ok' || this.metrics.status === 'slow')
     );
   }
@@ -1467,7 +1674,8 @@ export class Simulation {
   _busy() {
     return (
       this.instances.some((i) => i.state === 'pending' || i.state === 'terminating') ||
-      this.db.some((n) => n.state === 'promoting' || n.state === 'creating' || n.autoRecover)
+      this.db.some((n) => n.state === 'promoting' || n.state === 'creating' || n.autoRecover) ||
+      this.data.restoring
     );
   }
 

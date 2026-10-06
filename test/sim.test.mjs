@@ -258,7 +258,8 @@ test('private fleet without NAT cannot call outside APIs', () => {
   const s = sim('ha', { nat: 'none' });
   s.run(3);
   assert.equal(s.metrics.status, 'degraded');
-  assert.ok(Math.abs(s.metrics.successRaw - (1 - 0.4 * 0.15)) < 0.01, `success ${s.metrics.successRaw}`);
+  // of the 40% dynamic requests, the outside API calls (15%) and the S3 calls (10%) need a way out
+  assert.ok(Math.abs(s.metrics.successRaw - (1 - 0.4 * (0.15 + 0.1))) < 0.01, `success ${s.metrics.successRaw}`);
   const l = runScenario(s, 'serverFail');
   assert.ok(l.suggestions.some((x) => x.patch.nat === 'perAz'), 'should suggest NAT');
 });
@@ -376,6 +377,90 @@ test('AWS Budgets: a budget below the running cost alerts right away; without on
   t.run(2);
   const l = runScenario(t, 'spike');
   assert.ok(l.suggestions.some((x) => x.patch.budget), 'should suggest setting a budget');
+});
+
+test('payment outage: orders fail without SQS, wait in the queue and drain with it', () => {
+  const a = sim('ha');
+  a.run(3);
+  const la = runScenario(a, 'paymentDown');
+  assert.notEqual(la.grade, 'pass');
+  assert.ok(la.suggestions.some((x) => x.patch.queue), 'should suggest SQS');
+
+  const b = sim('ha', { queue: true });
+  b.run(3);
+  assert.ok(b.trigger('paymentDown') !== false);
+  b.run(10);
+  assert.ok(b.queue.depth > 50, `backlog builds while the provider is down (${b.queue.depth.toFixed(0)})`);
+  assert.ok(b.metrics.success > 0.99, `orders are still accepted (${b.metrics.success})`);
+  for (let k = 0; k < 600 && !b.lesson; k++) b.run(0.1);
+  assert.equal(b.lesson.grade, 'pass');
+  assert.ok(b.events.some((e) => e.type === 'queueDrained'), 'the worker drains the backlog once the provider is back');
+  assert.ok(b.queue.depth < 1);
+});
+
+test('SQS soaks up the order backlog of a spike and the worker drains it afterwards', () => {
+  const s = sim('ha', { queue: true });
+  s.run(3);
+  const l = runScenario(s, 'spike');
+  assert.ok(l.points.some((p) => p.kind === 'good' && /SQS gom/.test(p.text)), 'lesson credits the queue for the backlog');
+  for (let k = 0; k < 600 && s.queue.depth >= 1; k++) s.run(0.1);
+  assert.ok(s.queue.depth < 1, 'backlog drained');
+});
+
+test('accidental delete: Multi-AZ copies the delete, only AWS Backup brings the data back', () => {
+  const a = sim('ha'); // RDS Multi-AZ, no backup
+  a.run(3);
+  const la = runScenario(a, 'dataDelete');
+  assert.equal(la.grade, 'fail');
+  assert.ok(a.events.some((e) => e.type === 'replicatedDelete'), 'the standby gets the delete too');
+  assert.ok(la.suggestions.some((x) => x.patch.backup), 'should suggest AWS Backup');
+  assert.ok(a.data.lost);
+
+  const b = sim('ha', { backup: true });
+  b.run(3);
+  const lb = runScenario(b, 'dataDelete');
+  assert.equal(lb.grade, 'partial');
+  assert.ok(b.events.some((e) => e.type === 'restoreDone'));
+  assert.equal(b.metrics.status, 'ok');
+});
+
+test('accidental delete needs somewhere data lives; repair brings an unbacked site back empty', () => {
+  const s = new Simulation({ compute: 'lambda', s3: true });
+  assert.equal(s.trigger('dataDelete'), false);
+  const t = sim('serverless');
+  t.run(2);
+  runScenario(t, 'dataDelete');
+  assert.ok(t.events.some((e) => e.type === 'noBackup'));
+  t.trigger('repair');
+  t.run(3);
+  assert.ok(t.events.some((e) => e.type === 'dataGone'));
+  assert.equal(t.metrics.status, 'ok');
+});
+
+test('VPC Endpoint: S3 traffic leaves the NAT bill; with SQS nothing needs NAT any more', () => {
+  const a = sim('ha');
+  const b = sim('ha', { vpce: true });
+  a.run(2);
+  b.run(2);
+  assert.ok(a.flows.s3NatRps > 0, 'S3 calls go through NAT without an endpoint');
+  assert.equal(b.flows.s3NatRps, 0);
+  assert.ok(b.metrics.costBreakdown.nat < a.metrics.costBreakdown.nat, 'the endpoint lowers the NAT bill');
+  const c = sim('ha', { nat: 'none', queue: true, vpce: true });
+  c.run(3);
+  assert.equal(c.metrics.status, 'ok');
+  assert.equal(c.flows.awsFailRps, 0);
+  assert.ok(!c.events.some((e) => e.type === 'noNat'), 'nothing to warn about');
+});
+
+test('spike lesson points at the NAT bill for S3 traffic and suggests a VPC Endpoint', () => {
+  const s = sim('ha');
+  s.run(3);
+  const l = runScenario(s, 'spike');
+  assert.ok(l.suggestions.some((x) => x.patch.vpce), 'should suggest a VPC Endpoint');
+  const t = sim('ha', { vpce: true });
+  t.run(3);
+  const lt = runScenario(t, 'spike');
+  assert.ok(lt.points.some((p) => p.kind === 'good' && /VPC Endpoint/.test(p.text)));
 });
 
 if (failures) {

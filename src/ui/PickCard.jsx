@@ -12,7 +12,15 @@ const DB_STATE = { ok: 'Hoạt động', creating: 'Đang tạo / khôi phục',
 function live(p, snap, config) {
   if (!snap || p.mode !== 'sandbox') return null;
   const rows = [];
-  if (p.kind === 'ec2' && p.instId) {
+  if (p.key === 'worker') {
+    rows.push(['Đang xử lý', `${Math.round(snap.queue?.outRate || 0)} đơn/giây`], ['Đối tác thanh toán', snap.extDown ? 'đang sập — chờ thử lại' : 'hoạt động']);
+  } else if (p.kind === 'sqs' && snap.queue) {
+    rows.push(['Tin đang chờ', Math.round(snap.queue.depth).toLocaleString('vi-VN')], ['Vào hàng đợi', `${Math.round(snap.queue.inRate)} /giây`], ['Worker xử lý', `${Math.round(snap.queue.outRate)} /giây`]);
+  } else if (p.kind === 'vpce') {
+    rows.push(['Traffic S3 qua endpoint', `${Math.round(snap.s3App.viaEndpoint)} /giây`], ['Phí', config.queue ? 'S3 miễn phí · SQS theo giờ + GB' : 'miễn phí (Gateway Endpoint)']);
+  } else if (p.kind === 'backup') {
+    rows.push(['Lịch sao lưu', 'hằng ngày + liên tục (PITR)'], ['Trạng thái', snap.data.restoring ? `đang khôi phục (còn ${Math.ceil(snap.data.remaining)} giây)` : 'sẵn sàng khôi phục']);
+  } else if (p.kind === 'ec2' && p.instId) {
     const i = snap.fleet.find((x) => x.id === p.instId);
     if (!i) return null;
     rows.push(['Instance ID', i.id], ['Vị trí', `${AZ_LABEL[i.az]} (${AZ_CODE[i.az]})`], ['Trạng thái', STATE_TEXT[i.state] || i.state]);
@@ -39,7 +47,9 @@ function live(p, snap, config) {
     if (!n) return null;
     rows.push(['Vị trí', `public subnet · ${AZ_LABEL[n.az]}`], ['Tình trạng', n.state === 'ok' ? 'Hoạt động' : 'Hỏng (AZ sự cố)']);
     rows.push(['Phục vụ', config.nat === 'single' ? 'EC2 ở cả 2 AZ' : `EC2 ở ${AZ_LABEL[n.az]}`]);
+    if (snap.s3App.viaNat > 0.01) rows.push(['Traffic S3 qua NAT', `${Math.round(snap.s3App.viaNat)} /giây · tính phí theo GB`]);
   } else if (p.kind === 'external') {
+    if (snap.extDown) rows.push(['Tình trạng', 'Đang sập — không phản hồi']);
     rows.push(['Lời gọi ra ngoài', `${Math.round(snap.outbound.rps)} /giây`]);
     if (snap.outbound.failing > 0.01) rows.push(['Không tới được', `${Math.round(snap.outbound.failing)} /giây`]);
   } else if (p.kind === 'budgets' && snap.budget) {

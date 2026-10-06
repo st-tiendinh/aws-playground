@@ -3,7 +3,7 @@
 import { useSim } from '../state/store.js';
 import { STATUS, fmtMoney, fmtMs, fmtPct, fmtRps, fmtUsers } from './format.js';
 
-const COST_NAMES = { ec2: 'EC2', elb: 'Load Balancer', rds: 'RDS', cache: 'ElastiCache', dynamodb: 'DynamoDB', lambda: 'Lambda', apigw: 'API Gateway', s3: 'S3', cloudfront: 'CloudFront', route53: 'Route 53', nat: 'NAT Gateway', waf: 'AWS WAF' };
+const COST_NAMES = { ec2: 'EC2', elb: 'Load Balancer', rds: 'RDS', cache: 'ElastiCache', dynamodb: 'DynamoDB', lambda: 'Lambda', apigw: 'API Gateway', s3: 'S3', cloudfront: 'CloudFront', route53: 'Route 53', nat: 'NAT Gateway', vpce: 'VPC Endpoint', sqs: 'SQS + worker', backup: 'AWS Backup', waf: 'AWS WAF' };
 
 export function Spark({ history, width = 168, height = 40 }) {
   const W = width;
@@ -97,6 +97,12 @@ export function MetricsBar() {
           <em>/giờ</em>
         </b>
       </div>
+      {snap.queue && snap.queue.depth >= 1 && (
+        <div className={`stat ${snap.queue.depth >= 100 ? 'is-warn' : ''}`} title={`SQS: ${Math.round(snap.queue.inRate)} đơn/giây vào hàng đợi, Lambda worker xử lý ${Math.round(snap.queue.outRate)} đơn/giây.`}>
+          <small>SQS chờ</small>
+          <b>{Math.round(snap.queue.depth).toLocaleString('vi-VN')}</b>
+        </div>
+      )}
       {snap.budget && <BudgetStat budget={snap.budget} />}
     </div>
   );

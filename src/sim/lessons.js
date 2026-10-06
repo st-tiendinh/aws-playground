@@ -1,6 +1,6 @@
 // Turns a finished scenario into a lesson card: a verdict, what helped, what hurt and
 // one-click suggestions that patch the architecture so the user can try again.
-import { ASG, AZ_LABEL, BUDGET, LAMBDA, OTHER_AZ } from './constants.js';
+import { ASG, AZ_LABEL, BACKUP, BUDGET, LAMBDA, OTHER_AZ, SQS } from './constants.js';
 
 export const ACTION_TITLE = {
   quake: 'Động đất phá huỷ một AZ',
@@ -10,7 +10,19 @@ export const ACTION_TITLE = {
   night: 'Đêm khuya vắng khách',
   ddos: 'Tấn công DDoS',
   sqlInjection: 'Tấn công SQL injection',
+  paymentDown: 'Đối tác thanh toán sập',
+  dataDelete: 'Xoá nhầm dữ liệu',
 };
+
+// what a private EC2 fleet without a NAT Gateway can no longer reach. Empty when nothing breaks:
+// SQS takes the outside calls off the app tier, VPC Endpoints reach S3 and SQS privately.
+export function natlessFailures(c) {
+  const out = [];
+  if (!c.queue) out.push('API thanh toán, email…');
+  else if (!c.vpce) out.push('SQS');
+  if (c.s3 && !c.vpce) out.push('S3');
+  return out;
+}
 
 const pct = (x) => {
   const v = Math.max(0, Math.min(1, x)) * 100;
@@ -18,6 +30,7 @@ const pct = (x) => {
 };
 const money = (x) => '$' + (x < 1 ? x.toFixed(3) : x.toFixed(2));
 const usd = (x) => '$' + Math.round(x).toLocaleString('vi-VN');
+const num = (x) => Math.round(x).toLocaleString('vi-VN');
 
 export function evaluateLesson(sc) {
   const cfg = sc.cfg;
@@ -95,10 +108,13 @@ export function evaluateLesson(sc) {
         suggest('Thêm RDS Multi-AZ', { database: 'rds', rdsMultiAz: true });
       }
       if (ec2 && cfg.appSubnet === 'private' && cfg.nat !== 'none') {
+        const needs = natlessFailures(cfg);
         if (cfg.nat === 'perAz') {
           good(`Mỗi AZ có NAT Gateway riêng: EC2 ở ${AZ_LABEL[other]} vẫn gọi được API bên ngoài qua NAT của chính AZ đó.`);
+        } else if (!needs.length) {
+          good('NAT Gateway duy nhất có sự cố cũng không sao: EC2 không còn cần NAT — SQS gánh các lời gọi ra ngoài, VPC Endpoint nối tới S3 và SQS.');
         } else if (sc.natAz === az) {
-          bad(`NAT Gateway duy nhất nằm ở ${AZ_LABEL[az]}: EC2 ở ${AZ_LABEL[other]} vẫn chạy nhưng mất đường ra Internet — các request cần gọi API thanh toán, email… bị lỗi.`);
+          bad(`NAT Gateway duy nhất nằm ở ${AZ_LABEL[az]}: EC2 ở ${AZ_LABEL[other]} vẫn chạy nhưng không gọi được ${needs.join(', ')} — các request đó bị lỗi.`);
           suggest('Mỗi AZ một NAT Gateway', { nat: 'perAz' });
         } else {
           info(`NAT Gateway duy nhất nằm ở ${AZ_LABEL[sc.natAz]} nên lần này không bị ảnh hưởng — nhưng nó vẫn là điểm lỗi duy nhất.`);
@@ -191,7 +207,21 @@ export function evaluateLesson(sc) {
       } else if (cfg.database === 'dynamodb') {
         good('DynamoDB (chế độ on-demand) tự tăng năng lực đọc/ghi theo lượng truy cập.');
       }
-      if (ec2 && cfg.nat !== 'none') info('NAT Gateway tính phí theo từng GB dữ liệu đi qua: lượng truy cập tăng thì phí NAT cũng tăng theo.');
+      if (cfg.queue) {
+        if (sc.queueMax >= SQS.backlogWarn) {
+          good(`SQS gom tới khoảng ${num(sc.queueMax)} đơn hàng lúc cao điểm; Lambda worker xử lý dần ${SQS.workerRate} đơn/giây — web trả lời ngay, không phải chờ API thanh toán, và không đơn nào bị mất.`);
+        } else good('SQS nhận đơn và trả lời ngay; Lambda worker xử lý kịp nên hàng đợi không bị dồn.');
+      }
+      let natS3Flagged = false;
+      if (ec2 && cfg.appSubnet === 'private' && cfg.s3) {
+        if (cfg.vpce) good('EC2 đọc/ghi S3 qua Gateway VPC Endpoint: miễn phí và không đi qua NAT, dù lượng truy cập tăng vọt.');
+        else if (sc.natS3CostMax > 0.5) {
+          natS3Flagged = true;
+          bad(`Traffic từ EC2 tới S3 đi qua NAT Gateway và bị tính phí theo GB: lúc cao điểm riêng phần này tốn khoảng ${money(sc.natS3CostMax)}/giờ.`);
+          suggest('Thêm VPC Endpoint (S3, SQS)', { vpce: true });
+        }
+      }
+      if (ec2 && cfg.nat !== 'none' && !natS3Flagged) info('NAT Gateway tính phí theo từng GB dữ liệu đi qua: lượng truy cập tăng thì phí NAT cũng tăng theo.');
       info(`Chi phí ước tính tăng từ ${money(sc.costStart)} lên ${money(sc.costMax)}/giờ lúc cao điểm.`);
       if (cfg.budget) {
         if (flags.has('budgetWarn') || flags.has('budgetOver')) {
@@ -281,13 +311,47 @@ export function evaluateLesson(sc) {
       break;
     }
 
+    case 'paymentDown': {
+      if (cfg.queue) {
+        good(`Đơn hàng vẫn được nhận: ứng dụng chỉ bỏ đơn vào SQS rồi trả lời ngay. Trong lúc đối tác sập, hàng đợi giữ hộ tới khoảng ${num(sc.queueMax)} đơn.`);
+        if (flags.has('queueDrained')) good('Đối tác hoạt động lại, Lambda worker thử lại và xử lý hết hàng đợi — không mất đơn nào.');
+        else info('Lambda worker vẫn đang xử lý nốt các đơn còn trong hàng đợi.');
+        info('Thực tế nên gắn thêm dead-letter queue (DLQ) để giữ riêng những tin xử lý thất bại quá nhiều lần.');
+      } else {
+        bad('Ứng dụng gọi thẳng API thanh toán ngay trong request: đối tác sập là các request đặt hàng lỗi theo, khách phải đặt lại — hoặc bỏ đi.');
+        suggest('Thêm SQS + Lambda worker', { queue: true });
+      }
+      break;
+    }
+
+    case 'dataDelete': {
+      const store = cfg.database === 'rds' ? 'RDS' : cfg.database === 'dynamodb' ? 'DynamoDB' : 'ổ đĩa EBS của EC2';
+      if (sc.hadBackup) {
+        good(`AWS Backup có sao lưu liên tục (point-in-time recovery): khôi phục ${store} về thời điểm ngay trước lệnh xoá, chỉ mất vài phút thay đổi cuối.`);
+        info(`Khôi phục cần thời gian (mô phỏng ${BACKUP.detectTime + BACKUP.restoreTime} giây, thực tế vài chục phút tới vài giờ) — website lỗi trong lúc chờ. Nên thử khôi phục định kỳ để biết chính xác mất bao lâu.`);
+      } else {
+        bad(`Không có bản sao lưu nào: phần dữ liệu bị xoá trên ${store} đã mất vĩnh viễn.`);
+        suggest('Bật AWS Backup', { backup: true });
+      }
+      if (cfg.database === 'rds' && cfg.rdsMultiAz) {
+        info('RDS Multi-AZ không cứu được: bản standby nhận ngay lệnh xoá như primary. Multi-AZ chống hỏng phần cứng, không chống xoá nhầm.');
+      }
+      if (cfg.database === 'rds' && !sc.hadBackup) {
+        info('Ngoài thực tế RDS bật sẵn backup tự động (giữ 1–35 ngày) — đừng tắt nó. AWS Backup quản lý tập trung cho mọi dịch vụ, giữ lâu hơn và sao chép được sang Region khác.');
+      }
+      if (cfg.database === 'dynamodb') info('DynamoDB nhân bản lệnh xoá qua mọi AZ; muốn quay lại phải bật point-in-time recovery hoặc dùng AWS Backup.');
+      if (cfg.database === 'none') info('Dữ liệu nằm trên ổ EBS của EC2: chỉ snapshot (AWS Backup) mới khôi phục được.');
+      break;
+    }
+
     default:
       break;
   }
 
-  // a private fleet without NAT breaks every outside call, whatever the event was
-  if (ec2 && cfg.appSubnet === 'private' && cfg.nat === 'none') {
-    bad('EC2 ở private subnet nhưng không có NAT Gateway: mọi lời gọi ra Internet (API thanh toán, email…) đều thất bại.');
+  // a private fleet without NAT breaks every call that still needs it, whatever the event was
+  const natless = natlessFailures(cfg);
+  if (ec2 && cfg.appSubnet === 'private' && cfg.nat === 'none' && natless.length) {
+    bad(`EC2 ở private subnet nhưng không có NAT Gateway: mọi lời gọi tới ${natless.join(', ')} đều thất bại.`);
     suggest('Thêm NAT Gateway cho mỗi AZ', { nat: 'perAz' });
   }
   if (sc.cfgChanged) info('Bạn đã thay đổi kiến trúc trong lúc sự cố diễn ra — đánh giá dựa trên kiến trúc lúc bắt đầu.');
@@ -302,9 +366,13 @@ export function evaluateLesson(sc) {
   } else {
     grade = 'pass';
   }
+  // the site keeps half working, but deleted data with no backup is gone for good
+  const dataLost = sc.action === 'dataDelete' && flags.has('noBackup');
+  if (dataLost) grade = 'fail';
 
-  const headline =
-    sc.action === 'night'
+  const headline = dataLost
+    ? 'Dữ liệu đã mất vĩnh viễn!'
+    : sc.action === 'night'
       ? grade === 'pass'
         ? 'Chi phí co giãn theo lượng truy cập'
         : 'Website ổn nhưng lãng phí tiền'

@@ -3,7 +3,7 @@
 // request packets along the routes the simulation reports and turns simulation events
 // (earthquake, failures, scaling, failover…) into effects and sounds.
 import * as THREE from 'three';
-import { AZ_CODE, AZ_IDS, AZ_LABEL } from '../sim/constants.js';
+import { AZ_CODE, AZ_IDS, AZ_LABEL, LAMBDA, SQS } from '../sim/constants.js';
 import { Fx, arc } from './fx.js';
 import { createModel } from './models/index.js';
 import { CAT_COLOR, COLOR } from './palette.js';
@@ -30,6 +30,13 @@ export const LAYOUT = {
   external: [-15, 0, -20],
   // account-level, outside the Region: AWS Budgets
   budgets: [-27, 0, 11],
+  // background work beside the data tier: the SQS queue and the Lambda worker draining it
+  sqs: [20.5, 0, -3],
+  worker: [20.5, 0, 3],
+  // the S3 Gateway Endpoint sits on the VPC edge, on the way to S3
+  vpce: [-5.3, 0, 7.5],
+  // AWS Backup vault, outside the VPC
+  backup: [-10, 0, -9],
   // subnet tiles inside each AZ strip: [public (NAT) | app servers | data]
   tiles: { pub: { x: 1.8, w: 3.0 }, app: { x: 9.05, w: 10.9 }, data: { x: 17.7, w: 5.6 } },
   asg: { x: 9.05, z: 0, w: 11.4, d: 26.4 },
@@ -71,6 +78,10 @@ const TITLES = {
   waf: ['AWS WAF', 'lọc request'],
   shield: ['AWS Shield', 'chống DDoS'],
   budgets: ['AWS Budgets', ''],
+  sqs: ['Amazon SQS', 'hàng đợi đơn hàng'],
+  worker: ['Lambda worker', 'xử lý đơn nền'],
+  vpce: ['VPC Endpoint', 'S3 · SQS'],
+  backup: ['AWS Backup', 'sao lưu + PITR'],
 };
 
 const pickWeighted = (list) => {
@@ -223,6 +234,14 @@ export class SandboxScene {
     this._ensure('waf', c.waf, () => createModel('waf', { id: 'waf', position: L.waf }));
     this._ensure('shield', c.shield, () => createModel('shield', { id: 'shield', position: L.shield }));
     this._ensure('budgets', c.budget > 0, () => createModel('budgets', { id: 'budgets', position: L.budgets }));
+    this._ensure('sqs', c.queue, () => createModel('sqs', { id: 'sqs', position: L.sqs }));
+    this._ensure('worker', c.queue, () => createModel('lambda', { id: 'worker', position: L.worker, scale: 0.8 }));
+    this._ensure('vpce', c.vpce, () => createModel('vpce', { id: 'vpce', position: L.vpce }));
+    this._ensure('backup', c.backup, () => createModel('backup', { id: 'backup', position: L.backup }));
+    // SQS backlog (log scale: 1 → 1 message, 10 → 4, 100 → 8, 1000+ → 12), vault, outside APIs
+    this.node('sqs')?.setQueue(Math.min(12, Math.ceil(Math.log10(sim.queue.depth + 1) * 4)));
+    this.node('backup')?.setState(sim.data.restoring ? 'restoring' : 'ok');
+    this.node('external').setState(sim.extDown ? 'off' : 'ok');
     this._ensure('asg', ec2 && c.asg, () => {
       const m = createModel('outline', { id: 'asg', kind: 'asg', category: 'compute', w: L.asg.w, d: L.asg.d, r: 1.2, color: CAT_COLOR.compute, fill: 0.07, speed: 0.6, thick: 0.16, position: [L.asg.x, AZ_Y + 0.02, L.asg.z] });
       m.setLabel('Auto Scaling Group', '', { color: CAT_COLOR.compute, y: 0.4 });
@@ -351,6 +370,29 @@ export class SandboxScene {
       budget.setLabelSub(`$${sim.config.budget.toLocaleString('vi-VN')}/tháng · dự báo ${Math.round(ratio * 100)}%`);
       budget.setLabelState(ratio >= 1 ? 'bad' : ratio >= 0.8 ? 'warn' : null);
     }
+    const sqs = this.node('sqs');
+    if (sqs) {
+      const d = sim.queue.depth;
+      sqs.setLabelSub(d < 1 ? 'hàng đợi trống' : `${Math.round(d).toLocaleString('vi-VN')} đơn đang chờ`);
+      sqs.setLabelState(d >= SQS.backlogWarn ? 'warn' : null);
+    }
+    const worker = this.node('worker');
+    if (worker) {
+      const waiting = sim.extDown && sim.queue.depth > 0;
+      worker.setLabelSub(waiting ? 'đối tác sập · chờ thử lại' : f.queueOut > 0.5 ? `xử lý ${Math.round(f.queueOut)} đơn/giây` : 'chờ việc');
+      worker.setLabelState(waiting ? 'warn' : null);
+    }
+    this.node('vpce')?.setLabelSub(sim.config.queue ? 'S3 miễn phí · SQS riêng tư' : 'S3 · miễn phí');
+    const vault = this.node('backup');
+    if (vault) {
+      vault.setLabelSub(sim.data.restoring ? `đang khôi phục… ${Math.ceil(sim.data.timer)} giây` : 'hằng ngày + liên tục (PITR)');
+      vault.setLabelState(sim.data.restoring ? 'warn' : null);
+    }
+    const ddb = this.node('dynamodb');
+    if (ddb) {
+      ddb.setLabelSub(sim.data.wiped ? 'DỮ LIỆU BỊ XOÁ' : 'NoSQL');
+      ddb.setLabelState(sim.data.wiped ? 'bad' : null);
+    }
     const elb = this.node('elb');
     if (elb) {
       const healthy = sim.instances.filter((i) => i.registered && i.state === 'running').length;
@@ -379,14 +421,17 @@ export class SandboxScene {
         md._title = title;
         md.setLabel(title, '');
       }
-      const sub = {
-        ok: n.role === 'primary' ? `${Math.round(n.load * 100)}% tải` : 'đồng bộ dữ liệu',
-        creating: n.role === 'primary' ? 'đang khôi phục…' : 'đang tạo…',
-        promoting: 'đang failover…',
-        failed: 'HỎNG',
-      }[n.state];
+      const wiped = sim.data.wiped && n.state === 'ok';
+      const sub = wiped
+        ? 'DỮ LIỆU BỊ XOÁ'
+        : {
+            ok: n.role === 'primary' ? `${Math.round(n.load * 100)}% tải` : 'đồng bộ dữ liệu',
+            creating: n.role === 'primary' ? 'đang khôi phục…' : 'đang tạo…',
+            promoting: 'đang failover…',
+            failed: 'HỎNG',
+          }[n.state];
       md.setLabelSub(sub);
-      md.setLabelState(n.state === 'failed' ? 'bad' : n.state === 'promoting' ? 'warn' : null);
+      md.setLabelState(n.state === 'failed' || wiped ? 'bad' : n.state === 'promoting' ? 'warn' : null);
     }
     // with a big fleet the CPU gauges speak for themselves; keep the labels short
     const busy = sim.instances.length > 4;
@@ -397,8 +442,8 @@ export class SandboxScene {
       md.setLabelState(n.state === 'failed' ? 'bad' : null);
     }
     const ext = this.node('external');
-    ext.setLabelState(f.outFailRps > 0.01 ? 'warn' : null);
-    ext.setLabelSub(f.outFailRps > 0.01 ? 'một số server không gọi ra được!' : 'API thanh toán, email…');
+    ext.setLabelState(sim.extDown ? 'bad' : f.outFailRps > 0.01 ? 'warn' : null);
+    ext.setLabelSub(sim.extDown ? 'đang sập — không phản hồi!' : f.outFailRps > 0.01 ? 'một số server không gọi ra được!' : 'API thanh toán, email…');
     for (const i of sim.instances) {
       const md = this.node('ec2:' + i.id);
       if (!md) continue;
@@ -471,13 +516,19 @@ export class SandboxScene {
         fail();
         return this._emit(segs, color, failSeg);
       }
-      // some dynamic requests also call an outside API: that call needs a way out
+      // some dynamic requests also call an outside API (that call needs a way out) — or, with
+      // SQS, only drop the order into the queue; some read or write files in S3
+      const from = 'ec2:' + t.id;
       if (!isStatic && Math.random() < f.outboundShare) {
-        this._outbound('ec2:' + t.id, t.out);
-        if (t.out && !t.out.ok) {
+        const ok = f.queue ? this._toAws(from, 'sqs', t.out) : this._outbound(from, t.out, f.extDown);
+        if (!ok) {
           fail();
           return this._emit(segs, color, failSeg);
         }
+      }
+      if (!isStatic && f.s3AppShare && Math.random() < f.s3AppShare && !this._toAws(from, 's3', t.out)) {
+        fail();
+        return this._emit(segs, color, failSeg);
       }
     } else {
       hop('apigw');
@@ -490,7 +541,13 @@ export class SandboxScene {
         fail();
         return this._emit(segs, color, failSeg);
       }
-      if (!isStatic && Math.random() < f.outboundShare) this._outbound('lambda', { ok: true, via: null });
+      if (!isStatic && Math.random() < f.outboundShare) {
+        const ok = f.queue ? this._toAws('lambda', 'sqs', null) : this._outbound('lambda', { ok: true, via: null }, f.extDown);
+        if (!ok) {
+          fail();
+          return this._emit(segs, color, failSeg);
+        }
+      }
     }
     if (!isStatic && f.db !== 'none' && f.dbTarget) {
       const key = f.db === 'dynamodb' ? 'dynamodb' : 'rds:' + f.dbTarget;
@@ -502,29 +559,71 @@ export class SandboxScene {
     return this._emit(segs, color, failSeg);
   }
 
-  // an outside API call: server → (NAT Gateway) → Internet, or nowhere when there is no way out
-  _outbound(fromKey, way) {
+  // an outside API call: server → (NAT Gateway) → Internet, or nowhere when there is no way out.
+  // `down`: the provider itself is out, the call dies on arrival. Returns whether it worked.
+  _outbound(fromKey, way, down = false) {
     const a = this._anchorOf(fromKey);
-    if (!a || !way) return;
+    if (!a || !way) return true;
     const opts = { color: COLOR.outbound, size: 0.75, speed: 12 };
     if (way.via) {
       const natKey = 'nat:' + way.via;
       const s1 = this._seg(fromKey, natKey);
-      if (!s1) return;
+      if (!s1) return way.ok && !down;
       if (!way.ok) {
         this.fx.packets.spawn([s1], { ...opts, failSeg: 0 });
-        return;
+        return false;
       }
       const s2 = this._seg(natKey, 'external');
-      if (s2) this.fx.packets.spawn([s1, s2], { ...opts, onHop: (k) => k === 0 && this.node(natKey)?.pulse() });
-    } else if (way.ok) {
-      const s = this._seg(fromKey, 'external');
-      if (s) this.fx.packets.spawn([s], opts);
-    } else {
-      // private subnet without NAT: the call has nowhere to go
-      const b = a.clone().add(new THREE.Vector3(-1.4, 0.6, 0));
-      this.fx.packets.spawn([arc(a, b, 0.8)], { ...opts, speed: 5, failSeg: 0 });
+      if (s2) this.fx.packets.spawn([s1, s2], { ...opts, failSeg: down ? 1 : -1, onHop: (k) => k === 0 && this.node(natKey)?.pulse() });
+      return !down;
     }
+    if (way.ok) {
+      const s = this._seg(fromKey, 'external');
+      if (s) this.fx.packets.spawn([s], { ...opts, failSeg: down ? 0 : -1 });
+      return !down;
+    }
+    this._deadEnd(a, opts);
+    return false;
+  }
+
+  // private subnet without a way out: the call has nowhere to go
+  _deadEnd(a, opts) {
+    const b = a.clone().add(new THREE.Vector3(-1.4, 0.6, 0));
+    this.fx.packets.spawn([arc(a, b, 0.8)], { ...opts, speed: 5, failSeg: 0 });
+  }
+
+  // a call to an AWS service (S3, SQS) from the app tier. From a private subnet it takes the VPC
+  // Endpoint (S3: the gateway on the VPC edge; SQS: an interface inside the subnet, drawn as a
+  // direct hop) or else the NAT Gateway; from a public subnet or Lambda it goes straight there.
+  _toAws(fromKey, toKey, way) {
+    const a = this._anchorOf(fromKey);
+    if (!a || !this.node(toKey)) return true;
+    const f = this.sim.flows;
+    const opts = { color: toKey === 's3' ? '#86efac' : '#f9a8d4', size: 0.7, speed: 12 };
+    if (f.priv && f.vpce) {
+      const path = toKey === 's3' && this.node('vpce') ? [this._seg(fromKey, 'vpce'), this._seg('vpce', 's3')] : [this._seg(fromKey, toKey)];
+      if (path.every(Boolean)) this.fx.packets.spawn(path, opts);
+      return true;
+    }
+    if (f.priv) {
+      if (!way?.via) {
+        this._deadEnd(a, opts);
+        return false;
+      }
+      const natKey = 'nat:' + way.via;
+      const s1 = this._seg(fromKey, natKey);
+      if (!s1) return way.ok;
+      if (!way.ok) {
+        this.fx.packets.spawn([s1], { ...opts, failSeg: 0 });
+        return false;
+      }
+      const s2 = this._seg(natKey, toKey);
+      if (s2) this.fx.packets.spawn([s1, s2], { ...opts, onHop: (k) => k === 0 && this.node(natKey)?.pulse() });
+      return true;
+    }
+    const s = this._seg(fromKey, toKey);
+    if (s) this.fx.packets.spawn([s], opts);
+    return true;
   }
 
   _emit(segs, color, failSeg, endKey) {
@@ -564,6 +663,30 @@ export class SandboxScene {
         this.fx.packets.spawn([arc(a, b)], { color: COLOR.dns, speed: 12, size: 0.7, onDone: () => this.node('route53')?.pulse() });
       }
     }
+    // the Lambda worker pulls messages off the queue and calls the payment provider; while the
+    // provider is down a few retries keep bouncing off it
+    if (f.queue && this.node('sqs') && this.node('worker')) {
+      const retrying = f.extDown && this.sim.queue.depth > 0;
+      this._workAcc = (this._workAcc || 0) + dt * this.speed * (f.queueOut > 0.5 ? Math.min(6, 1 + Math.pow(f.queueOut, 0.35)) : retrying ? 1.2 : 0);
+      while (this._workAcc >= 1) {
+        this._workAcc -= 1;
+        const s1 = this._seg('sqs', 'worker');
+        const s2 = this._seg('worker', 'external');
+        if (!s1 || !s2) break;
+        this.fx.packets.spawn([s1, s2], { color: COLOR.outbound, size: 0.75, speed: 12, failSeg: retrying ? 1 : -1 });
+      }
+    }
+    // AWS Backup: a recovery point now and then; a stream back to the data store while restoring
+    const src = this._dataKey();
+    if (this.sim.config.backup && src && this.node('backup')) {
+      const restoring = this.sim.data.restoring;
+      this._backupAcc = (this._backupAcc || 0) + dt * this.speed * (restoring ? 2.5 : 0.4);
+      if (this._backupAcc >= 1) {
+        this._backupAcc = 0;
+        const seg = restoring ? this._seg('backup', src) : this._seg(src, 'backup');
+        if (seg) this.fx.packets.spawn([seg], { color: '#a3e635', size: restoring ? 1.1 : 0.8, speed: 10, onDone: restoring ? null : () => this.node('backup')?.pulse() });
+      }
+    }
     // synchronous replication stream primary → standby
     const db = this.sim.db;
     const p = db.find((n) => n.role === 'primary' && n.state === 'ok');
@@ -576,6 +699,18 @@ export class SandboxScene {
         if (seg) this.fx.packets.spawn([seg], { color: COLOR.db, speed: 9, size: 0.7 });
       }
     }
+  }
+
+  // where the app's data lives: the RDS primary, DynamoDB, or the first server's EBS disk
+  _dataKey() {
+    const c = this.sim.config;
+    if (c.database === 'rds') {
+      const p = this.sim.db.find((n) => n.role === 'primary') || this.sim.db[0];
+      return p ? 'rds:' + p.id : null;
+    }
+    if (c.database === 'dynamodb') return 'dynamodb';
+    const i = c.compute === 'ec2' && this.sim.instances.find((x) => x.state !== 'terminating');
+    return i ? 'ec2:' + i.id : null;
   }
 
   // floating error codes over the nodes that are dropping requests
@@ -592,7 +727,7 @@ export class SandboxScene {
       if (f.noTarget && f.elb) say('elb', '503 · không còn server');
       let noWayOut = false;
       for (const t of f.targets) {
-        if (t.out && !t.out.ok && f.outFailRps > 0) {
+        if (t.out && !t.out.ok && (f.outFailRps > 0 || f.awsFailRps > 0)) {
           if (t.out.via) say('nat:' + t.out.via, 'NAT hỏng · mất đường ra Internet', 'bad', 2.4);
           else if (!noWayOut) {
             noWayOut = true;
@@ -609,6 +744,11 @@ export class SandboxScene {
       if (f.lambdaFail > 0.02) say('lambda', '429 · vượt giới hạn');
     }
     if (f.dbFail > 0.05 && f.dbTarget) say(f.db === 'dynamodb' ? 'dynamodb' : 'rds:' + f.dbTarget, '500 · lỗi database');
+    if (f.extDown && !f.queue && f.outFailRps > 0) say('external', '503 · đối tác không phản hồi', 'bad', 2.4);
+    if (this.sim.data.wiped) {
+      const key = this._dataKey();
+      if (key) say(key, this.sim.data.restoring ? 'đang khôi phục dữ liệu…' : '404 · không tìm thấy đơn hàng', this.sim.data.restoring ? 'warn' : 'bad', 2.4);
+    }
   }
 
   // ── simulation events → effects ───────────────────────────────────────────
@@ -721,6 +861,73 @@ export class SandboxScene {
       case 'sqlInjectionEnd':
         this.sfx?.play('good');
         break;
+      case 'paymentDown': {
+        const a = pos('external');
+        if (a) {
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.6, a.z), 'Đối tác thanh toán sập!', { kind: 'bad', dur: 3, rise: 2 });
+          this.fx.sparks(a, { n: 20, speed: 5 });
+        }
+        this.sfx?.play('alert');
+        break;
+      }
+      case 'paymentUp': {
+        const a = pos('external');
+        if (a) {
+          this.fx.ring({ x: a.x, y: 0, z: a.z }, { color: COLOR.ok, r0: 1, r1: 5, dur: 1.2 });
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.6, a.z), 'Hoạt động lại ✓', { kind: 'good', dur: 2.4 });
+        }
+        this.sfx?.play('good');
+        break;
+      }
+      case 'queueBacklog':
+      case 'queueDrained': {
+        const a = pos('sqs');
+        if (a) this.fx.callout(new THREE.Vector3(a.x, a.y + 2, a.z), e.type === 'queueDrained' ? 'Hàng đợi trống ✓' : 'Đơn dồn lại · không mất', { kind: e.type === 'queueDrained' ? 'good' : 'warn', dur: 2.6 });
+        break;
+      }
+      case 'dataDelete': {
+        const key = this._dataKey();
+        const a = key && pos(key);
+        if (a) {
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.4, a.z), 'DELETE FROM orders…', { kind: 'bad', dur: 3, rise: 2 });
+          this.fx.sparks(a, { n: 24, speed: 5 });
+          this.fx.glowBurst(a, { color: '#ef4444', size: 3.5, life: 0.5 });
+        }
+        this.sfx?.play('alert');
+        break;
+      }
+      case 'replicatedDelete': {
+        const sb = this.sim.db.find((d) => d.role === 'standby');
+        const a = sb && pos('rds:' + sb.id);
+        if (a) this.fx.callout(new THREE.Vector3(a.x, a.y + 2.2, a.z), 'Standby cũng bị xoá!', { kind: 'warn', dur: 3 });
+        break;
+      }
+      case 'restoreStart': {
+        const a = pos('backup');
+        if (a) {
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.4, a.z), 'Khôi phục về trước lúc xoá…', { kind: 'info', dur: 3 });
+          this.fx.beam(new THREE.Vector3(a.x, 0, a.z), { color: '#a3e635', r: 1.2, h: 10, dur: 1.8 });
+        }
+        this.sfx?.play('build');
+        break;
+      }
+      case 'restoreDone': {
+        const key = this._dataKey();
+        const a = key && pos(key);
+        if (a) {
+          this.fx.ring({ x: a.x, y: AZ_Y, z: a.z }, { color: '#a3e635', r0: 0.5, r1: 4, dur: 1.2 });
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.2, a.z), 'Dữ liệu đã về ✓', { kind: 'good', dur: 2.6 });
+        }
+        this.sfx?.play('good');
+        break;
+      }
+      case 'noBackup': {
+        const key = this._dataKey();
+        const a = key && pos(key);
+        if (a) this.fx.callout(new THREE.Vector3(a.x, a.y + 2.4, a.z), 'Không có backup · mất vĩnh viễn', { kind: 'bad', dur: 3.2 });
+        this.sfx?.play('alarm');
+        break;
+      }
       case 'budgetWarn':
       case 'budgetOver': {
         // an alert can fire on the very step the budget was set, before the gauge was built
@@ -803,6 +1010,10 @@ export class SandboxScene {
       shield: [L.shield, 11],
       // aimed a little above the ground so the tall gauge and its label stay in view
       budgets: [[L.budgets[0], 1.2, L.budgets[2]], 14],
+      sqs: [[L.sqs[0], 0, 0], 14],
+      worker: [[L.worker[0], 0, 0], 14],
+      vpce: [L.vpce, 12],
+      backup: [[L.backup[0], 1, L.backup[2]], 12],
       asg: [[L.asg.x, 0, L.asg.z], 30],
       nat: [[L.natX, 0, 0], 26],
       external: [L.external, 14],
@@ -839,6 +1050,8 @@ export class SandboxScene {
     for (const m of this.dying) m.update(dt);
     const lam = this.node('lambda');
     if (lam) lam.setEnvs(this.sim.lambda.conc, this.sim.lambda.coldRate);
+    // the worker gets messages in batches: concurrency ≈ batches per second × run time
+    this.node('worker')?.setEnvs((this.sim.flows.queueOut / SQS.batch) * LAMBDA.duration);
     this.fx.packets.timeScale = Math.max(0.0001, speed);
     this.fx.update(dt);
   }

@@ -2,7 +2,8 @@
 // boundaries (VPC, Auto Scaling group), subnet tiles, the globe, generic tokens (files,
 // AMIs, messages…) and the explore-only services: CloudWatch, SQS, IAM, EBS, KMS,
 // CloudTrail, EventBridge, CloudFormation, AWS Budgets, ACM, Step Functions, EFS, ECR,
-// Aurora — and the Shared Responsibility Model stack.
+// Aurora, Network ACL, Kinesis Data Streams, Systems Manager, AWS Backup — and the Shared
+// Responsibility Model stack.
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CAT_COLOR, COLOR } from '../palette.js';
@@ -453,7 +454,7 @@ export class CloudWatchModel extends Model {
     this.height = 2.5;
     this.radius = 1.2;
     this.anchorY = 1.4;
-    this.add(new THREE.CylinderGeometry(0.6, 0.75, 0.2, 24), this.mat('#3f1530'), [0, 0.1, 0]);
+    this.add(new THREE.CylinderGeometry(0.6, 0.75, 0.2, 24), this.mat('#16264a'), [0, 0.1, 0]);
     this.add(new THREE.CylinderGeometry(0.08, 0.1, 0.7, 10), this.mat('#94a3b8'), [0, 0.5, 0]);
     this.add(new RoundedBoxGeometry(2.0, 1.3, 0.14, 2, 0.06), this.mat('#1e1b2e'), [0, 1.45, 0]);
     this.add(new RoundedBoxGeometry(2.06, 0.12, 0.18, 2, 0.04), this.mat(this.color), [0, 2.1, 0]);
@@ -502,7 +503,7 @@ export class CloudWatchModel extends Model {
     g.stroke();
     g.setLineDash([]);
     g.lineWidth = 4;
-    g.strokeStyle = this.alarm ? '#f87171' : '#f472b6';
+    g.strokeStyle = this.alarm ? '#f87171' : '#60a5fa';
     g.beginPath();
     this.series.forEach((v, i) => {
       const x = (i / (this.series.length - 1)) * W;
@@ -786,7 +787,7 @@ export class CloudTrailModel extends Model {
     this.height = 2.55;
     this.radius = 1.2;
     this.anchorY = 1.5;
-    this.add(new THREE.CylinderGeometry(0.6, 0.75, 0.2, 24), this.mat('#3f1530'), [0, 0.1, 0]);
+    this.add(new THREE.CylinderGeometry(0.6, 0.75, 0.2, 24), this.mat('#16264a'), [0, 0.1, 0]);
     this.add(new THREE.CylinderGeometry(0.08, 0.1, 0.5, 10), this.mat('#94a3b8'), [0, 0.45, 0]);
     this.add(new RoundedBoxGeometry(1.56, 1.82, 0.14, 2, 0.06), this.mat('#1e1b2e'), [0, 1.58, 0]);
     this.add(new RoundedBoxGeometry(1.62, 0.12, 0.18, 2, 0.04), this.mat(this.color), [0, 2.5, 0]);
@@ -802,15 +803,15 @@ export class CloudTrailModel extends Model {
     this.lens = new THREE.Group();
     this.lens.position.set(0.72, 1.2, 0.3);
     this.body.add(this.lens);
-    const rim = this.mat('#f9a8d4', { metalness: 0.4, roughness: 0.3 });
+    const rim = this.mat('#93c5fd', { metalness: 0.4, roughness: 0.3 });
     this.add(new THREE.TorusGeometry(0.24, 0.045, 10, 32), rim, [0, 0, 0], { parent: this.lens });
     this.add(new THREE.CylinderGeometry(0.04, 0.05, 0.36, 10), rim, [0.2, -0.28, 0], { rot: [0, 0, 0.7], parent: this.lens });
-    const lensGlass = new THREE.MeshBasicMaterial({ color: '#fbcfe8', transparent: true, opacity: 0.25, depthWrite: false });
+    const lensGlass = new THREE.MeshBasicMaterial({ color: '#bfdbfe', transparent: true, opacity: 0.25, depthWrite: false });
     lensGlass.userData.noLook = true;
     this.add(new THREE.CircleGeometry(0.22, 28), lensGlass, [0, 0, 0], { parent: this.lens, shadow: false });
     this.clock = 9 * 3600 + 12 * 60;
     const seed = opts.rows || ['ListBuckets · app-role', 'DescribeInstances · lan', 'ConsoleLogin · lan'];
-    this.rows = seed.map((text, i) => ({ text, color: '#f472b6', time: this.clock - (i + 1) * 47 }));
+    this.rows = seed.map((text, i) => ({ text, color: '#60a5fa', time: this.clock - (i + 1) * 47 }));
     this.fresh = 0;
     this._acc = 0;
     this.finish();
@@ -820,7 +821,7 @@ export class CloudTrailModel extends Model {
   // an explore packet arrived: its label becomes the newest event
   pulse(a) {
     this.clock += 3 + Math.floor(Math.random() * 40);
-    this.rows.unshift({ text: a?.label || 'API call', color: a?.color || '#f472b6', time: this.clock });
+    this.rows.unshift({ text: a?.label || 'API call', color: a?.color || '#60a5fa', time: this.clock });
     this.rows.length = Math.min(this.rows.length, TRAIL_ROWS);
     this.fresh = 1;
     this._draw();
@@ -833,7 +834,7 @@ export class CloudTrailModel extends Model {
     const font = '"Be Vietnam Pro", sans-serif';
     g.fillStyle = '#0f1424';
     g.fillRect(0, 0, W, H);
-    g.fillStyle = '#f472b6';
+    g.fillStyle = '#60a5fa';
     g.font = `700 17px ${font}`;
     g.fillText('Event history', 12, 26);
     g.fillStyle = 'rgba(148,163,184,0.25)';
@@ -841,7 +842,7 @@ export class CloudTrailModel extends Model {
     this.rows.forEach((r, i) => {
       const y = 46 + i * 36;
       if (i === 0 && this.fresh > 0) {
-        g.fillStyle = `rgba(244,114,182,${0.32 * this.fresh})`;
+        g.fillStyle = `rgba(96,165,250,${0.32 * this.fresh})`;
         g.fillRect(6, y, W - 12, 32);
       }
       g.fillStyle = r.color;
@@ -957,7 +958,7 @@ export class CloudFormationModel extends Model {
     this.height = 0.4 + colors.length * 0.25;
     this.radius = 1.2;
     this.anchorY = 1.0;
-    this.add(new RoundedBoxGeometry(2.0, 0.26, 1.6, 2, 0.07), this.mat('#3f1530'), [0, 0.13, 0]);
+    this.add(new RoundedBoxGeometry(2.0, 0.26, 1.6, 2, 0.07), this.mat('#16264a'), [0, 0.13, 0]);
     // status strip: green = COMPLETE, blinking amber = IN_PROGRESS, blinking red = ROLLBACK
     this.statusMat = this.glow(COLOR.ok, 1.3);
     this.statusMat.userData.noLook = true;
@@ -1011,10 +1012,10 @@ export class BudgetsModel extends Model {
     this.height = 2.75;
     this.radius = 1.0;
     this.anchorY = 1.35;
-    this.add(new THREE.CylinderGeometry(0.72, 0.88, 0.26, 32), this.mat('#3f1530'), [0, 0.13, 0]);
+    this.add(new THREE.CylinderGeometry(0.72, 0.88, 0.26, 32), this.mat('#16264a'), [0, 0.13, 0]);
     this.add(new THREE.TorusGeometry(0.74, 0.04, 8, 48), this.glow(this.color, 1.4), [0, 0.27, 0], { rot: [Math.PI / 2, 0, 0], shadow: false });
     // gauge: glass tube, a fill coloured by how close the forecast is, marks at 80% and 100%
-    const glass = new THREE.MeshStandardMaterial({ color: '#fbcfe8', transparent: true, opacity: 0.22, roughness: 0.1, depthWrite: false, side: THREE.DoubleSide });
+    const glass = new THREE.MeshStandardMaterial({ color: '#bfdbfe', transparent: true, opacity: 0.22, roughness: 0.1, depthWrite: false, side: THREE.DoubleSide });
     this.add(new THREE.CylinderGeometry(0.34, 0.34, GAUGE_H + 0.12, 28, 1, true), glass, [0, 0.3 + (GAUGE_H + 0.12) / 2, 0], { shadow: false });
     this.fillMat = new THREE.MeshStandardMaterial({ color: COLOR.ok, emissive: COLOR.ok, emissiveIntensity: 0.55, roughness: 0.35 });
     this.fillMat.userData.noLook = true;
@@ -1471,5 +1472,283 @@ export class ResponsibilityModel extends Model {
         m.emissiveIntensity = glow;
       }
     }
+  }
+}
+
+// ── Network ACL: a checkpoint boom across the subnet entrance; it lifts for allowed
+// traffic and rattles on a deny ──
+export class NACLModel extends Model {
+  constructor(opts = {}) {
+    super('nacl', { category: 'network', ...opts });
+    this.color = CAT_COLOR.network;
+    const span = opts.span || 2.6;
+    const z0 = -span / 2;
+    this.height = 1.75;
+    this.radius = span / 2;
+    this.anchorY = 1.05;
+    const dark = this.mat('#2e2366');
+    this.add(new THREE.CylinderGeometry(0.42, 0.5, 0.2, 8), dark, [0, 0.1, z0]);
+    this.add(new RoundedBoxGeometry(0.3, 1.2, 0.3, 2, 0.05), this.mat(this.color, { roughness: 0.4 }), [0, 0.7, z0]);
+    this.add(new RoundedBoxGeometry(0.24, 0.52, 0.24, 2, 0.05), dark, [0, 0.26, -z0]);
+    const sign = new THREE.MeshBasicMaterial({ map: textTexture('NACL', { w: 256, h: 112, bg: '#2e2366', font: '800 72px "Be Vietnam Pro", sans-serif' }), toneMapped: false });
+    sign.userData.noLook = true;
+    this.add(new THREE.PlaneGeometry(0.9, 0.39), sign, [0, 1.52, z0 + 0.17], { shadow: false });
+    // striped boom pivoting on the post, lying across the lane (traffic crosses along x)
+    this.boom = new THREE.Group();
+    this.boom.position.set(0, 1.0, z0);
+    this.body.add(this.boom);
+    const segs = 6;
+    const seg = (span - 0.1) / segs;
+    this.barMats = [];
+    for (let k = 0; k < segs; k++) {
+      const m = k % 2 ? this.mat('#f8fafc', { roughness: 0.4 }) : this.mat(this.color, { emissive: this.color, emissiveIntensity: 0.25, roughness: 0.4 });
+      this.add(new THREE.BoxGeometry(0.14, 0.14, seg), m, [0, 0, 0.08 + (k + 0.5) * seg], { parent: this.boom });
+      this.barMats.push(m);
+    }
+    this.flashColor = new THREE.Color();
+    this.flashT = 0;
+    this.open = 0;
+    this.shakeT = 0;
+    this.finish();
+  }
+
+  // verdict in the explore flows: 'allow' lifts the boom, 'deny' rattles it
+  flash(kind) {
+    this.flashColor.set(kind === 'allow' ? COLOR.ok : COLOR.bad);
+    this.flashT = 1;
+    if (kind === 'allow') this.open = 1;
+    else this.shakeT = 1;
+  }
+
+  animate(dt, t) {
+    this.open = Math.max(0, this.open - dt * 1.2);
+    this.shakeT = Math.max(0, this.shakeT - dt * 2.2);
+    this.boom.rotation.x = -Math.sin(this.open * Math.PI) * 1.05;
+    this.boom.rotation.y = Math.sin(t * 38) * 0.06 * this.shakeT;
+    if (this.flashT > 0) {
+      this.flashT = Math.max(0, this.flashT - dt * 1.5);
+      for (const m of this.barMats) {
+        m.emissive.copy(this.flashColor);
+        m.emissiveIntensity = 0.2 + this.flashT * 1.4;
+      }
+      if (this.flashT === 0) this._lookDirty = true;
+    }
+  }
+}
+
+// ── Kinesis Data Streams: parallel shard lanes with records streaming through them ──
+const KDS_MAX = 4;
+const KDS_DOTS = 6;
+const KDS_GAP = 0.82;
+const kdsZ = (k, n) => (k - (n - 1) / 2) * KDS_GAP;
+
+export class KinesisModel extends Model {
+  constructor(opts = {}) {
+    super('kinesis', { category: 'integration', ...opts });
+    this.color = CAT_COLOR.integration;
+    this.L = 4.4;
+    this.height = 0.8;
+    this.radius = 2.7;
+    this.anchorY = 0.55;
+    // the base stretches in depth with the number of shards (geometry is 1 deep)
+    this.base = this.add(new RoundedBoxGeometry(this.L + 0.9, 0.24, 1, 2, 0.08), this.mat('#4a1530'), [0, 0.12, 0]);
+    const laneGeo = new RoundedBoxGeometry(this.L, 0.1, 0.6, 2, 0.04);
+    const railGeo = new THREE.BoxGeometry(this.L, 0.025, 0.04);
+    const dotGeo = new RoundedBoxGeometry(0.24, 0.16, 0.3, 2, 0.04);
+    const laneMat = this.mat('#6b1d45');
+    this.railMat = this.glow(this.color, 1.2);
+    const dotMat = this.glow('#fde68a', 0.8);
+    this.count = Math.max(1, Math.min(KDS_MAX, opts.count ?? 1));
+    this.lanes = [];
+    for (let k = 0; k < KDS_MAX; k++) {
+      const g = new THREE.Group();
+      const on = k < this.count;
+      g.position.set(0, 0.24, kdsZ(Math.min(k, this.count - 1), this.count));
+      g.visible = on;
+      this.body.add(g);
+      this.add(laneGeo, laneMat, [0, 0.05, 0], { parent: g });
+      for (const z of [-0.31, 0.31]) this.add(railGeo, this.railMat, [0, 0.11, z], { parent: g, shadow: false });
+      const dots = [];
+      for (let j = 0; j < KDS_DOTS; j++) dots.push(this.add(dotGeo, dotMat, [0, 0.18, 0], { parent: g, shadow: false }));
+      this.lanes.push({ g, s: on ? 1 : 0, dots, phase: k * 0.37 });
+    }
+    this._depth = this.count * KDS_GAP + 0.5;
+    this.base.scale.z = this._depth;
+    this.load = opts.load ?? 0.4;
+    this.flow = 0;
+    this.bump = 0;
+    this.finish();
+  }
+
+  // number of shards (1–4)
+  setCount(n) {
+    this.count = Math.max(1, Math.min(KDS_MAX, Math.round(n)));
+  }
+
+  setLoad(v) {
+    this.load = v;
+  }
+
+  // packet anchors: 'in0'…'in3' where a shard takes records in, 'out0'…'out3' where consumers read
+  pinWorld(name, out = new THREE.Vector3()) {
+    const m = /^(in|out)(\d)$/.exec(name || '');
+    const k = Math.min(m ? +m[2] : 0, this.count - 1);
+    const x = (m && m[1] === 'out' ? 1 : -1) * (this.L / 2 - 0.1);
+    this.group.updateWorldMatrix(true, false);
+    return this.group.localToWorld(out.set(x, 0.5, kdsZ(k, this.count)));
+  }
+
+  pulse() {
+    this.bump = 1;
+  }
+
+  animate(dt) {
+    const n = this.count;
+    if (this.state !== 'failed') this.flow += dt * (0.12 + this.load * 0.5);
+    this.bump = Math.max(0, this.bump - dt * 2);
+    this.railMat.emissiveIntensity = (1.2 + this.bump * 1.5) * (1 - this._fail * 0.9);
+    for (const [k, l] of this.lanes.entries()) {
+      l.s += ((k < n ? 1 : 0) - l.s) * Math.min(1, dt * 5);
+      l.g.visible = l.s > 0.02;
+      if (!l.g.visible) continue;
+      l.g.position.z += (kdsZ(Math.min(k, n - 1), n) - l.g.position.z) * Math.min(1, dt * 4);
+      l.g.scale.set(1, l.s, l.s);
+      for (const [j, d] of l.dots.entries()) {
+        const u = (((j / KDS_DOTS + this.flow + l.phase) % 1) + 1) % 1;
+        d.position.x = -this.L / 2 + 0.2 + u * (this.L - 0.4);
+      }
+    }
+    this._depth += (n * KDS_GAP + 0.5 - this._depth) * Math.min(1, dt * 4);
+    this.base.scale.z = this._depth;
+  }
+}
+
+// ── Systems Manager: an operations console (terminal) under a turning gear ────
+const SSM_LINES = 4;
+
+export class SSMModel extends Model {
+  constructor(opts = {}) {
+    super('ssm', { category: 'management', ...opts });
+    this.color = CAT_COLOR.management;
+    this.height = 2.45;
+    this.radius = 1.2;
+    this.anchorY = 1.3;
+    this.add(new RoundedBoxGeometry(1.9, 0.24, 1.2, 2, 0.07), this.mat('#16264a'), [0, 0.12, 0]);
+    this.add(new RoundedBoxGeometry(1.96, 0.05, 1.26, 2, 0.02), this.glow(this.color, 1.2), [0, 0.265, 0], { shadow: false });
+    this.add(new THREE.CylinderGeometry(0.08, 0.1, 0.45, 10), this.mat('#94a3b8'), [0, 0.5, -0.1]);
+    this.add(new RoundedBoxGeometry(1.8, 1.2, 0.14, 2, 0.06), this.mat('#1e1b2e'), [0, 1.3, -0.1]);
+    this.canvas = document.createElement('canvas');
+    this.canvas.width = 256;
+    this.canvas.height = 168;
+    this.tex = new THREE.CanvasTexture(this.canvas);
+    this.tex.colorSpace = THREE.SRGBColorSpace;
+    const scr = new THREE.MeshBasicMaterial({ map: this.tex, toneMapped: false });
+    scr.userData.noLook = true;
+    this.add(new THREE.PlaneGeometry(1.64, 1.06), scr, [0, 1.3, -0.025], { shadow: false });
+    // gear: a toothed ring that turns faster while a command runs
+    this.gear = new THREE.Group();
+    this.gear.position.set(0, 2.18, -0.1);
+    this.body.add(this.gear);
+    const gm = this.glow(this.color, 0.9);
+    this.add(new THREE.TorusGeometry(0.2, 0.07, 8, 24), gm, [0, 0, 0], { parent: this.gear, shadow: false });
+    for (let k = 0; k < 8; k++) {
+      const a = (k / 8) * Math.PI * 2;
+      this.add(new THREE.BoxGeometry(0.12, 0.1, 0.1), gm, [Math.cos(a) * 0.3, Math.sin(a) * 0.3, 0], { rot: [0, 0, a], parent: this.gear, shadow: false });
+    }
+    this.lines = (opts.lines || ['$ aws ssm start-session', 'Starting session…', '$ uptime']).slice(-SSM_LINES);
+    this.spin = 0;
+    this.cursor = true;
+    this._acc = 0;
+    this.finish();
+    this._draw();
+  }
+
+  // an explore packet arrived: its label becomes the newest command on the screen
+  pulse(a) {
+    if (a?.label) {
+      this.lines.push('$ ' + a.label);
+      this.lines = this.lines.slice(-SSM_LINES);
+    }
+    this.spin = 1;
+    this._draw();
+  }
+
+  _draw() {
+    const g = this.canvas.getContext('2d');
+    const W = this.canvas.width;
+    g.fillStyle = '#0f1424';
+    g.fillRect(0, 0, W, this.canvas.height);
+    g.fillStyle = '#60a5fa';
+    g.font = '700 16px "Be Vietnam Pro", sans-serif';
+    g.fillText('Systems Manager', 12, 24);
+    g.fillStyle = 'rgba(148,163,184,0.25)';
+    g.fillRect(12, 33, W - 24, 2);
+    g.font = '500 14px ui-monospace, Menlo, monospace';
+    this.lines.forEach((line, i) => {
+      g.fillStyle = line.startsWith('$') ? '#a7f3d0' : '#cbd5e1';
+      let text = line;
+      while (text.length > 4 && g.measureText(text).width > W - 24) text = text.slice(0, -2) + '…';
+      g.fillText(text, 12, 58 + i * 24);
+    });
+    if (this.cursor) {
+      g.fillStyle = '#a7f3d0';
+      g.fillRect(12, 46 + this.lines.length * 24, 9, 15);
+    }
+    this.tex.needsUpdate = true;
+  }
+
+  animate(dt) {
+    this.spin = Math.max(0, this.spin - dt * 0.8);
+    if (this.state !== 'failed') this.gear.rotation.z -= dt * (0.6 + this.spin * 5);
+    this._acc += dt;
+    if (this._acc > 0.5) {
+      this._acc = 0;
+      this.cursor = !this.cursor;
+      this._draw();
+    }
+  }
+}
+
+// ── AWS Backup: a vault — the lamp blinks when a recovery point is stored and the dial
+// spins while a restore is running ──
+export class VaultModel extends Model {
+  constructor(opts = {}) {
+    super('backup', { category: 'storage', ...opts });
+    this.color = CAT_COLOR.storage;
+    this.height = 2.1;
+    this.radius = 1.15;
+    this.anchorY = 1.15;
+    this.add(new RoundedBoxGeometry(1.9, 0.22, 1.6, 2, 0.07), this.mat('#1f2d10'), [0, 0.11, 0]);
+    this.add(new RoundedBoxGeometry(1.96, 0.05, 1.66, 2, 0.02), this.glow(this.color, 1.2), [0, 0.245, 0], { shadow: false });
+    this.add(new RoundedBoxGeometry(1.5, 1.5, 1.2, 3, 0.12), this.mat('#64748b', { metalness: 0.6, roughness: 0.35 }), [0, 1.03, 0]);
+    // round door on the front, with a dial of three spokes
+    this.doorMat = this.mat('#94a3b8', { metalness: 0.7, roughness: 0.3, emissive: this.color, emissiveIntensity: 0.15 });
+    this.add(new THREE.CylinderGeometry(0.52, 0.52, 0.08, 40), this.doorMat, [0, 1.03, 0.62], { rot: [Math.PI / 2, 0, 0] });
+    this.dial = new THREE.Group();
+    this.dial.position.set(0, 1.03, 0.68);
+    this.body.add(this.dial);
+    const knob = this.mat('#e2e8f0', { metalness: 0.7, roughness: 0.25 });
+    this.add(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 20), knob, [0, 0, 0], { rot: [Math.PI / 2, 0, 0], parent: this.dial });
+    for (let k = 0; k < 3; k++) {
+      const a = (k / 3) * Math.PI * 2;
+      this.add(new THREE.BoxGeometry(0.06, 0.34, 0.05), knob, [Math.sin(a) * 0.2, Math.cos(a) * 0.2, 0.02], { rot: [0, 0, -a], parent: this.dial });
+    }
+    this.lamp = this.glow(this.color, 1.0);
+    this.add(new THREE.SphereGeometry(0.13, 16, 12), this.lamp, [0, 1.92, 0], { shadow: false });
+    this.blink = 0;
+    this.finish();
+  }
+
+  // a recovery point was stored
+  pulse() {
+    this.blink = 1;
+  }
+
+  animate(dt, t) {
+    const restoring = this.state === 'restoring';
+    if (this.state !== 'failed') this.dial.rotation.z += dt * (restoring ? 6 : 0.3);
+    this.blink = Math.max(0, this.blink - dt * 1.5);
+    this.lamp.emissiveIntensity = (restoring ? 1 + 1.5 * (0.5 + 0.5 * Math.sin(t * 10)) : 0.8 + this.blink * 2.2) * (1 - this._fail * 0.9);
+    this.doorMat.emissiveIntensity = restoring ? 0.4 + 0.4 * Math.sin(t * 6) : 0.15;
   }
 }

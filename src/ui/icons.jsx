@@ -49,6 +49,13 @@ const GLYPH = {
       <path d="M9.8 13h4.4" />
     </>
   ),
+  backup: (
+    <>
+      <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" />
+      <path d="M4 3.5v3.7h3.7" />
+      <path d="M12 8v4.2l3 1.8" />
+    </>
+  ),
   elb: (
     <>
       <circle cx="12" cy="12" r="2.6" />
@@ -68,6 +75,14 @@ const GLYPH = {
       <ellipse cx="12" cy="5.5" rx="7" ry="2.5" />
       <path d="M5 5.5v13c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5v-13" />
       <path d="M5 10c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5M5 14.5c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5" />
+    </>
+  ),
+  aurora: (
+    <>
+      <ellipse cx="10" cy="6" rx="6.5" ry="2.4" />
+      <path d="M3.5 6v11.6c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4V6" />
+      <path d="M3.5 11.8c0 1.3 2.9 2.4 6.5 2.4s6.5-1.1 6.5-2.4" />
+      <path d="M19.5 2.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z" fill="currentColor" stroke="none" />
     </>
   ),
   dynamodb: (
@@ -121,11 +136,25 @@ const GLYPH = {
       <rect x="13" y="8" width="4.5" height="8" rx="1" />
     </>
   ),
+  sg: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="1.5" />
+      <path d="M3 9.7h18M3 14.3h18M9 5v4.7M15 5v4.7M6 9.7v4.6M12 9.7v4.6M18 9.7v4.6M9 14.3V19M15 14.3V19" />
+    </>
+  ),
   nat: (
     <>
       <rect x="3" y="5.5" width="9" height="13" rx="2" />
       <path d="M8 12h12.5M16.5 8l4 4-4 4" />
       <circle cx="6.5" cy="12" r="1.1" fill="currentColor" />
+    </>
+  ),
+  vpce: (
+    <>
+      <rect x="2.5" y="6" width="8.5" height="12" rx="2" strokeDasharray="2.5 1.8" />
+      <circle cx="18" cy="12" r="3.5" />
+      <path d="M7.5 12h7" />
+      <circle cx="7.5" cy="12" r="1.2" fill="currentColor" />
     </>
   ),
   iam: (
@@ -196,10 +225,25 @@ const GLYPH = {
       <path d="M3.5 12l8.5 4.5 8.5-4.5M3.5 16l8.5 4.5 8.5-4.5" />
     </>
   ),
+  ssm: (
+    <>
+      <rect x="2.5" y="4" width="19" height="15" rx="2" />
+      <path d="M6 9l3 2.5L6 14M11 14.5h5" />
+    </>
+  ),
   budgets: (
     <>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M14.8 9.3c-.5-1-1.6-1.6-2.8-1.6-1.6 0-2.8.9-2.8 2.1 0 2.9 5.9 1.6 5.9 4.5 0 1.2-1.3 2.1-3 2.1-1.4 0-2.6-.6-3.1-1.7M12 6v1.7M12 16.4V18" />
+    </>
+  ),
+  organizations: (
+    <>
+      <rect x="9" y="2.5" width="6" height="5" rx="1" fill="currentColor" />
+      <rect x="2.5" y="16.5" width="5.5" height="5" rx="1" />
+      <rect x="9.25" y="16.5" width="5.5" height="5" rx="1" />
+      <rect x="16" y="16.5" width="5.5" height="5" rx="1" />
+      <path d="M12 7.5v9M5.25 16.5V12h13.5v4.5" />
     </>
   ),
   sqs: (
@@ -231,6 +275,13 @@ const GLYPH = {
       <rect x="2.5" y="16.5" width="8" height="5" rx="1.2" />
       <rect x="13.5" y="16.5" width="8" height="5" rx="1.2" />
       <path d="M12 7.5V12M6.5 16.5V12h11v4.5" />
+    </>
+  ),
+  kinesis: (
+    <>
+      <path d="M2.5 7c2.4-1.9 4.6 1.9 7 0s4.6 1.9 7 0 3.4-1.4 5-.8" />
+      <path d="M2.5 12c2.4-1.9 4.6 1.9 7 0s4.6 1.9 7 0 3.4-1.4 5-.8" />
+      <path d="M2.5 17c2.4-1.9 4.6 1.9 7 0s4.6 1.9 7 0 3.4-1.4 5-.8" />
     </>
   ),
   users: (
@@ -294,6 +345,19 @@ const UI = {
     <>
       <ellipse cx="12" cy="13" rx="5" ry="6" />
       <path d="M12 7V4M9.2 5.2L7.5 3M14.8 5.2L16.5 3M5 11H2M22 11h-3M5 16H2.5M21.5 16H19M7.2 18.5L4.5 21M16.8 18.5l2.7 2.5" />
+    </>
+  ),
+  card: (
+    <>
+      <rect x="2.5" y="5" width="16" height="11" rx="2" />
+      <path d="M2.5 9h16M6 12.8h4" />
+      <path d="M16 15.5l5 5M21 15.5l-5 5" />
+    </>
+  ),
+  trash: (
+    <>
+      <path d="M4 6.5h16M9.5 6.5V4h5v2.5M6 6.5l1 13.5h10l1-13.5" />
+      <path d="M10 10.5v6M14 10.5v6" />
     </>
   ),
   moon: <path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z" />,

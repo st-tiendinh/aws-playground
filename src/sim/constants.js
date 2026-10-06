@@ -63,12 +63,32 @@ export const R53 = { costPerHour: 0.0007, queryRatio: 0.01, costPerMillion: 0.4 
 // share of dynamic requests that call an outside API (payment, email…) and so need a way out
 // to the Internet; servers in a private subnet only have one through a NAT Gateway
 export const NAT = { outboundShare: 0.15, kbPerCall: 10, costPerHour: 0.059, costPerGB: 0.059 };
+// the outside APIs themselves (payment provider, email…): a synchronous call adds this much to
+// the request, and a provider outage lasts `downHold` seconds
+export const EXT = { ms: 220, downHold: 20 };
+// app servers also read/write files in S3 (product photos, uploads): from a private subnet that
+// traffic goes through the NAT Gateway (billed per GB) unless a Gateway VPC Endpoint carries it
+export const S3APP = { share: 0.1, kbPerCall: 60 };
+// SQS between the web tier and the slow work (payment, email): the web tier only enqueues the
+// order and answers at once; a Lambda worker drains the queue at its own pace and simply retries
+// while the payment provider is down — messages wait in the queue, nothing is lost
+export const SQS = { enqueueMs: 8, workerRate: 450, costPerMillion: 0.4, callsPerMsg: 3, batch: 10, backlogWarn: 100 };
+// VPC Endpoints for a private fleet: a Gateway Endpoint for S3 (free) and an Interface Endpoint
+// for SQS in each AZ (billed hourly and per GB, far below the NAT per-GB charge)
+export const VPCE = { ifaceCostPerHour: 0.013, costPerGB: 0.01 };
+// AWS Backup: daily backups + point-in-time recovery. A restore builds a new copy of the data
+// store (real life: tens of minutes to hours); only the last few minutes before the chosen
+// point in time are lost
+export const BACKUP = { detectTime: 2, restoreTime: 10, rpoMinutes: 5, costPerHour: 0.012 };
+// "accidental delete": a bad deploy wipes most of the data — this share of dynamic requests
+// needs the deleted rows and fails until the data is back
+export const WIPE = { share: 0.7 };
 // AWS Budgets: monthly budget choices ($), forecast = smoothed current run-rate × hours in a
 // month; alerts at 80% and 100% of the budget, re-armed once the forecast falls below 70%
 export const BUDGET = { options: [200, 1000, 5000], warnAt: 0.8, rearmAt: 0.7, smoothing: 3, hoursPerMonth: 730 };
 
 // how long each scenario is watched before the lesson card appears (simulated seconds)
-export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26 };
+export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26, paymentDown: 30, dataDelete: 30 };
 export const SPIKE_HOLD = 30;
 export const NIGHT_HOLD = 18;
 

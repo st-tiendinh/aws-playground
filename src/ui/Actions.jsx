@@ -1,5 +1,6 @@
 // Sandbox, right panel: the events you can throw at the architecture (earthquake, broken
-// server, a million users, database failure, night time, repair), traffic and speed.
+// server, a million users, database failure, attacks, a payment-provider outage, an
+// accidental delete, night time, repair), traffic and speed.
 import { useState } from 'react';
 import { ACTION_TITLE } from '../sim/lessons.js';
 import { USERS } from '../sim/constants.js';
@@ -15,6 +16,8 @@ const ACTIONS = [
   { id: 'dbFail', icon: 'dbx', title: 'Database sự cố', desc: 'ổ đĩa primary hỏng', tone: 'bad' },
   { id: 'ddos', icon: 'ddos', title: 'Tấn công DDoS', desc: 'botnet dội request rác', tone: 'bad' },
   { id: 'sqlInjection', icon: 'sqli', title: 'SQL injection', desc: 'request chứa mã độc', tone: 'bad' },
+  { id: 'paymentDown', icon: 'card', title: 'Thanh toán sập', desc: 'API đối tác ngừng 20 giây', tone: 'bad' },
+  { id: 'dataDelete', icon: 'trash', title: 'Xoá nhầm dữ liệu', desc: 'deploy lỗi chạy DELETE', tone: 'bad' },
   { id: 'night', icon: 'moon', title: 'Đêm khuya', desc: 'chỉ còn 500 người', tone: 'info' },
   { id: 'repair', icon: 'wrench', title: 'Phục hồi', desc: 'sửa mọi thứ', tone: 'good' },
 ];
@@ -43,8 +46,15 @@ export function Actions({ onAction }) {
 
   const disabled = (id) => {
     if (id === 'dbFail' || id === 'sqlInjection') return config.database === 'none';
+    if (id === 'dataDelete') return config.database === 'none' && config.compute !== 'ec2';
     if (id === 'quake') return snap.az[az] !== 'ok';
     return false;
+  };
+  const why = (id) => {
+    if (!disabled(id)) return undefined;
+    if (id === 'dbFail' || id === 'sqlInjection') return 'Cần có database (RDS hoặc DynamoDB)';
+    if (id === 'dataDelete') return 'Kiến trúc này chưa lưu dữ liệu ở đâu — thêm DynamoDB hoặc RDS';
+    return undefined;
   };
 
   const run = (id) => {
@@ -74,7 +84,7 @@ export function Actions({ onAction }) {
 
       <div className="action-grid">
         {ACTIONS.map((a) => (
-          <button key={a.id} className={`action tone-${a.tone}${hint === a.id ? ' is-hinted' : ''}${sc?.action === a.id ? ' is-running' : ''}`} onClick={() => run(a.id)} disabled={disabled(a.id)} title={(a.id === 'dbFail' || a.id === 'sqlInjection') && disabled(a.id) ? 'Cần có database (RDS hoặc DynamoDB)' : undefined}>
+          <button key={a.id} className={`action tone-${a.tone}${hint === a.id ? ' is-hinted' : ''}${sc?.action === a.id ? ' is-running' : ''}`} onClick={() => run(a.id)} disabled={disabled(a.id)} title={why(a.id)}>
             <span className="action-icon">
               <Icon name={a.icon} size={22} />
             </span>

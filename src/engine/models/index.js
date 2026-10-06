@@ -14,16 +14,20 @@ import {
   ExternalModel,
   GlobeModel,
   IAMModel,
+  KinesisModel,
   KMSModel,
+  NACLModel,
   OutlineModel,
   PersonModel,
   RegionModel,
   ResponsibilityModel,
   SQSModel,
+  SSMModel,
   StepFunctionsModel,
   TileModel,
   TokenModel,
   UsersModel,
+  VaultModel,
   ZoneModel,
 } from './misc.js';
 import {
@@ -92,6 +96,21 @@ const FACTORY = {
   aurora: (o) => new AuroraModel(o),
   resp: (o) => new ResponsibilityModel(o),
   mount: (o) => new TokenModel({ kind: 'mount', category: 'storage', color: '#3f6212', shape: 'disc', text: 'NFS', fontSize: 84, size: 0.8, ...o }),
+  // VPC Endpoint: a small gate on the VPC edge (gateway type) or a network card in the subnet (interface type)
+  vpce: (o) => new GateModel({ kind: 'vpce', category: 'network', color: '#a78bfa', dark: '#2e2366', scale: 0.75, ...o }),
+  eni: (o) => new TokenModel({ kind: 'eni', category: 'network', color: CAT_COLOR.network, shape: 'card', text: 'ENI', glow: true, size: 1.0, ...o }),
+  sg: (o) => new OutlineModel({ kind: 'sg', category: 'network', color: '#DD344C', ...o }),
+  nacl: (o) => new NACLModel(o),
+  // AWS Organizations: management account, member accounts, OUs and SCP cards
+  org: (o) => new TokenModel({ kind: 'org', category: 'management', color: '#1e3a8a', shape: 'cube', text: 'Mgmt', fontSize: 76, glow: true, size: 1.4, ...o }),
+  account: (o) => new TokenModel({ kind: 'account', category: 'management', color: '#2563eb', shape: 'cube', fontSize: 70, size: 1.25, ...o }),
+  ou: (o) => new ZoneModel({ kind: 'ou', category: 'management', color: CAT_COLOR.management, top: '#e0e7ff', side: '#a5b4fc', ...o }),
+  scp: (o) => new TokenModel({ kind: 'scp', category: 'management', color: '#b45309', shape: 'card', text: 'SCP', glow: true, size: 1.1, ...o }),
+  kinesis: (o) => new KinesisModel(o),
+  firehose: (o) => new TokenModel({ kind: 'firehose', category: 'integration', color: '#7c3aed', shape: 'card', text: 'Firehose', fontSize: 50, glow: true, size: 1.4, ...o }),
+  ssm: (o) => new SSMModel(o),
+  backup: (o) => new VaultModel(o),
+  param: (o) => new TokenModel({ kind: 'param', category: 'management', color: '#1d4ed8', shape: 'card', text: 'Param', fontSize: 66, glow: true, size: 1.2, ...o }),
 };
 
 export function createModel(kind, opts = {}) {

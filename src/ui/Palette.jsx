@@ -2,6 +2,7 @@
 // highlights the matching 3D model; warnings explain weak spots of the current design.
 import { CATEGORIES, serviceById } from '../data/services.js';
 import { EC2, ASG, BUDGET } from '../sim/constants.js';
+import { natlessFailures } from '../sim/lessons.js';
 import { PRESETS } from '../sim/presets.js';
 import { useApp, useSim } from '../state/store.js';
 import { Icon, ServiceIcon } from './icons.jsx';
@@ -72,14 +73,18 @@ function warnings(c) {
   if (ec2 && c.asg && !c.elb) w.push('Auto Scaling cần Load Balancer để chia tải cho các máy mới.');
   if (ec2 && c.database === 'none') w.push('Chưa có database riêng: dữ liệu nằm trên ổ đĩa của EC2.');
   if (ec2 && c.elb && c.appSubnet === 'public') w.push('EC2 đang ở public subnet (có IP public): nên đặt vào private subnet sau Load Balancer cho an toàn.');
-  if (ec2 && c.appSubnet === 'private' && c.nat === 'none') w.push('EC2 ở private subnet nhưng chưa có NAT Gateway: không gọi được API bên ngoài (thanh toán, email…).');
-  if (ec2 && c.appSubnet === 'private' && c.nat === 'single') w.push('Chỉ có 1 NAT Gateway (ở AZ A): AZ A sập thì EC2 ở AZ B cũng mất đường ra Internet.');
+  const natless = natlessFailures(c);
+  if (ec2 && c.appSubnet === 'private' && c.nat === 'none' && natless.length) w.push(`EC2 ở private subnet nhưng chưa có NAT Gateway: không gọi được ${natless.join(', ')}.`);
+  if (ec2 && c.appSubnet === 'private' && c.nat === 'single' && natless.length) w.push('Chỉ có 1 NAT Gateway (ở AZ A): AZ A sập thì EC2 ở AZ B cũng mất đường ra Internet.');
+  if (ec2 && c.appSubnet === 'private' && c.s3 && !c.vpce) w.push('EC2 ở private subnet đọc/ghi S3 qua NAT Gateway: bị tính phí theo từng GB — VPC Endpoint cho S3 thì miễn phí.');
+  if (!c.queue) w.push('Ứng dụng gọi thẳng API thanh toán ngay trong request: đối tác chậm hay sập là đơn hàng lỗi theo — thêm SQS để xử lý nền.');
   if (c.database === 'rds' && !c.rdsMultiAz) w.push('RDS Single-AZ: database hỏng là cả website lỗi theo.');
   if (c.database === 'rds' && !c.cache) w.push('Chưa bật ElastiCache: mọi lượt đọc đều dồn thẳng vào RDS, dễ nghẽn khi tải tăng.');
   if (!c.s3) w.push(c.compute === 'lambda' ? 'File tĩnh đang chạy qua Lambda — nên đặt trên S3.' : 'File tĩnh (ảnh, CSS, JS) đang do server phục vụ — đưa lên S3 để server nhẹ hơn.');
   if (c.compute === 'lambda' && c.database === 'none') w.push('Lambda không lưu dữ liệu lâu dài — thêm DynamoDB hoặc RDS.');
   if (!c.shield) w.push('Chưa bật AWS Shield: một đợt DDoS có thể chiếm hết công suất, chen cả người dùng thật ra ngoài.');
   if (c.database === 'rds' && !c.waf) w.push('Chưa bật AWS WAF: request chứa mã SQL độc hại có thể đi thẳng tới RDS.');
+  if (!c.backup && (c.database !== 'none' || ec2)) w.push('Chưa có AWS Backup: lỡ xoá nhầm dữ liệu là mất luôn — Multi-AZ cũng không cứu được trường hợp này.');
   if (!c.budget) w.push('Chưa đặt AWS Budgets: chi phí tăng vọt (ví dụ khi 1 triệu người ùa vào) chỉ lộ ra khi nhận hoá đơn.');
   return w;
 }
@@ -195,6 +200,9 @@ export function Palette() {
                   </button>
                 ))}
               </div>
+              <Row id="vpce" sid="vpce" title="VPC Endpoint" desc={c.queue ? 'tới S3, SQS không qua NAT' : 'tới S3 không qua NAT · miễn phí'}>
+                <Toggle on={c.vpce} onChange={(v) => set({ vpce: v })} label="VPC Endpoint" />
+              </Row>
             </>
           )}
         </>
@@ -203,6 +211,13 @@ export function Palette() {
           <span className="badge-on">Bật</span>
         </Row>
       )}
+
+      <h3 className="group-title" style={{ '--c': CATEGORIES.integration.color }}>
+        Xử lý nền
+      </h3>
+      <Row id="sqs" sid="sqs" title="SQS + Lambda worker" desc="đơn hàng vào hàng đợi, gọi API thanh toán sau">
+        <Toggle on={c.queue} onChange={(v) => set({ queue: v })} label="SQS + Lambda worker" />
+      </Row>
 
       <h3 className="group-title" style={{ '--c': CATEGORIES.storage.color }}>
         File tĩnh
@@ -233,6 +248,11 @@ export function Palette() {
       {c.database === 'rds' && (
         <Row id="cache" sid="elasticache" title="ElastiCache" desc="bộ nhớ đệm giảm tải RDS">
           <Toggle on={c.cache} onChange={(v) => set({ cache: v })} label="ElastiCache" />
+        </Row>
+      )}
+      {(c.database !== 'none' || ec2) && (
+        <Row id="backup" sid="backup" title="AWS Backup" desc={c.database === 'none' ? 'snapshot ổ EBS + khôi phục' : 'sao lưu + khôi phục về thời điểm'}>
+          <Toggle on={c.backup} onChange={(v) => set({ backup: v })} label="AWS Backup" />
         </Row>
       )}
 
