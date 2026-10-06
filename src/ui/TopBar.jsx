@@ -32,7 +32,7 @@ export function TopBar({ narrow, drawer, setDrawer }) {
           </svg>
         </span>
         <div className="brand-text">
-          <b>Cloud Playground 3D</b>
+          <b>Cloud Simulator</b>
           {!narrow && <small>Học các dịch vụ AWS cơ bản qua mô phỏng</small>}
         </div>
       </div>

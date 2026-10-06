@@ -1,4 +1,4 @@
-# Cloud Playground 3D
+# Cloud Simulator
 
 Mô phỏng 3D các dịch vụ AWS cơ bản cho người mới bắt đầu. Viết bằng **React + Vite**, mô hình 3D dựng thủ tục bằng **three.js** (không dùng file model ngoài).
 

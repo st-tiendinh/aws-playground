@@ -1,5 +1,5 @@
 {
-  "name": "aws-3d-playground",
+  "name": "cloud-simulator",
   "version": "0.1.0",
   "description": "Mô phỏng 3D các dịch vụ AWS cơ bản cho người mới (React + Vite + Three.js)",
   "type": "module",
