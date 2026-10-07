@@ -3,7 +3,7 @@
 import { useSim } from '../state/store.js';
 import { STATUS, fmtMoney, fmtMs, fmtPct, fmtRps, fmtUsers } from './format.js';
 
-const COST_NAMES = { ec2: 'EC2', elb: 'Load Balancer', rds: 'RDS', cache: 'ElastiCache', dynamodb: 'DynamoDB', lambda: 'Lambda', apigw: 'API Gateway', s3: 'S3', cloudfront: 'CloudFront', route53: 'Route 53', nat: 'NAT Gateway', vpce: 'VPC Endpoint', sqs: 'SQS + worker', backup: 'AWS Backup', waf: 'AWS WAF', guardduty: 'GuardDuty', leak: 'Máy đào coin (key bị lộ)' };
+const COST_NAMES = { ec2: 'EC2', elb: 'Load Balancer', rds: 'RDS', cache: 'ElastiCache', dynamodb: 'DynamoDB', lambda: 'Lambda', apigw: 'API Gateway', s3: 'S3', cloudfront: 'CloudFront', route53: 'Route 53', nat: 'NAT Gateway', vpce: 'VPC Endpoint', sqs: 'SQS + worker', backup: 'AWS Backup', waf: 'AWS WAF', guardduty: 'GuardDuty', leak: 'Máy đào coin (key bị lộ)', dr: 'Region dự phòng (Tokyo)', analytics: 'Phân tích (S3 + Athena / Redshift)' };
 
 export function Spark({ history, width = 168, height = 40 }) {
   const W = width;
@@ -28,6 +28,17 @@ export function Spark({ history, width = 168, height = 40 }) {
   );
 }
 
+// which Region the users are served from — the primary, both (active-active) or the DR one —
+// once there is a second Region or the primary one is down
+function servedFrom(snap) {
+  const share = snap.dr ? snap.dr.share : 0;
+  const down = snap.region === 'down';
+  if (!snap.dr && !down) return null;
+  if (share >= 1) return { where: 'Tokyo', tip: down ? 'Singapore đang sập: Route 53 đã chuyển mọi người dùng sang Region dự phòng ở Tokyo.' : 'Route 53 vẫn gửi mọi người dùng sang Tokyo cho tới khi Singapore sẵn sàng nhận lại.' };
+  if (share > 0) return { where: down ? 'Tokyo' : 'SG + Tokyo', tip: down ? 'Singapore đang sập; Tokyo vẫn phục vụ phần người dùng của mình, chờ Route 53 chuyển nốt phần còn lại.' : 'Active-active: Route 53 chia người dùng cho cả Singapore và Tokyo.' };
+  return down ? { where: null, tip: 'Singapore đang sập và chưa có Region nào thay thế.' } : { where: 'Singapore', tip: 'Người dùng vào Region chính ở Singapore; Tokyo đang dự phòng.' };
+}
+
 // AWS Budgets: this month's forecast as a share of the budget
 function BudgetStat({ budget }) {
   const ratio = budget.forecast / budget.amount;
@@ -45,6 +56,7 @@ export function MetricsBar() {
   const config = useSim((s) => s.config);
   if (!snap) return null;
   const st = STATUS[snap.status];
+  const region = servedFrom(snap);
   const ec2 = config.compute === 'ec2';
   const ins = snap.instances;
   const costTip = Object.entries(snap.costBreakdown)
@@ -54,10 +66,10 @@ export function MetricsBar() {
 
   return (
     <div className="metrics">
-      <div className={`status status-${st.cls}`}>
+      <div className={`status status-${st.cls}`} title={region?.tip}>
         <span className="status-dot" />
         <div>
-          <small>Website</small>
+          <small>{region?.where ? `Website · ${region.where}` : 'Website'}</small>
           <b>{st.text}</b>
         </div>
       </div>
@@ -84,6 +96,7 @@ export function MetricsBar() {
             <>
               {ins.running}/{ins.total}
               {ins.pending > 0 && <em className="pending"> +{ins.pending}</em>}
+              {snap.dr?.fleet.length > 0 && <em className="pending"> · Tokyo {snap.dr.running}</em>}
             </>
           ) : (
             `${Math.ceil(snap.lambda.conc - 0.05)}/${snap.lambda.limit}`

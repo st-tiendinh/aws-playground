@@ -17,6 +17,7 @@ import {
   DDB,
   DDOS,
   DEPLOY,
+  DR,
   EC2,
   ELB,
   EXT,
@@ -29,7 +30,9 @@ import {
   OTHER_AZ,
   R53,
   RDS,
+  REGION,
   REGION_MS,
+  REPORT,
   REQ_PER_USER,
   S3,
   S3APP,
@@ -69,7 +72,12 @@ export const DEFAULT_CONFIG = {
   backup: false, // AWS Backup: daily backups + point-in-time recovery of the data store
   guardduty: false, // Amazon GuardDuty: threat detection on CloudTrail, VPC Flow Logs and DNS logs
   canary: false, // CodeDeploy canary: a new release gets 10% of traffic first, a 5xx alarm rolls it back
+  dr: 'none', // 'none' | 'backup' | 'pilot' | 'warm' | 'active' — disaster recovery in a second Region
+  analytics: 'none', // 'none' | 'athena' | 'redshift' — where reports run: the production database, S3 + Athena, Redshift (zero-ETL)
 };
+
+const DR_MODES = ['backup', 'pilot', 'warm', 'active'];
+const ANALYTICS_MODES = ['athena', 'redshift'];
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 // queueing delay multiplier: requests wait longer as a resource gets busy
@@ -114,8 +122,18 @@ export function normalizeConfig(c = {}) {
   out.nat = out.appSubnet === 'private' && ['single', 'perAz', 'regional'].includes(out.nat) ? out.nat : 'none';
   // a public fleet reaches S3 and SQS directly: VPC Endpoints only matter for a private one
   if (out.appSubnet !== 'private') out.vpce = false;
+  // moving users between Regions is Route 53's job (health checks + failover routing), and backup
+  // & restore needs the backups it restores from (unless there is no data to keep at all)
+  out.dr = DR_MODES.includes(out.dr) ? out.dr : 'none';
+  if (!out.route53) out.dr = 'none';
+  if (out.dr === 'backup' && !out.backup && hasData(out)) out.dr = 'none';
+  // reports need data to read: a copy of the database in S3 (Athena) or in Redshift (zero-ETL)
+  out.analytics = ANALYTICS_MODES.includes(out.analytics) && out.database !== 'none' ? out.analytics : 'none';
   return out;
 }
+
+// whether the architecture keeps data anywhere (a database, or the servers' own disks)
+export const hasData = (c) => c.database !== 'none' || c.compute === 'ec2';
 
 const NAMES = {
   route53: 'Route 53',
@@ -186,6 +204,8 @@ export class Simulation {
     if (prev.budget !== next.budget) this.budget.alerted = 0;
     if (this.scenario) this.scenario.cfgChanged = true;
     this._apply(prev, {});
+    // what the patch itself asked for: DR switched off by hand needs no explanation
+    this._drAsked = patch.dr;
     this._announceConfig(prev, next);
     this._route(0);
   }
@@ -197,6 +217,11 @@ export class Simulation {
   }
 
   trigger(action, opts = {}) {
+    // with the whole primary Region gone there is nothing left there to break or attack
+    if (this.regionDown && !['repair', 'spike', 'night', 'regionDown'].includes(action)) {
+      this._emit('noop', 'warn', `Region ${REGION.code} đang sập — bấm Phục hồi trước khi thử sự kiện khác.`);
+      return false;
+    }
     switch (action) {
       case 'quake':
         return this._quake(opts.az || 'a');
@@ -220,6 +245,10 @@ export class Simulation {
         return this._leakedKey();
       case 'badDeploy':
         return this._badDeploy();
+      case 'regionDown':
+        return this._regionDown();
+      case 'report':
+        return this._report();
       case 'repair':
         return this._repair();
       default:
@@ -275,7 +304,32 @@ export class Simulation {
       deploy: { active: this.deploy.active, phase: this.deploy.phase, share: this.deploy.share, canary: this.deploy.canary },
       data: { wiped: this.data.wiped, restoring: this.data.restoring, remaining: this.data.restoring ? Math.max(0, this.data.timer) : 0, lost: this.data.lost },
       s3App: { rps: this.flows.s3AppRps, viaNat: this.flows.s3NatRps, viaEndpoint: this.flows.s3VpceRps, failing: this.flows.awsFailRps },
+      region: this.regionDown ? 'down' : 'ok',
+      report: this.report.active ? { where: this.report.where, remaining: Math.max(0, this.report.timer) } : null,
+      dr: this._drSnapshot(),
       scenario: sc ? { action: sc.action, az: sc.az, remaining: Math.max(0, sc.end - this.t) } : null,
+    };
+  }
+
+  // the DR Region as the HUD and the pick card see it
+  _drSnapshot() {
+    const d = this.dr;
+    if (this.config.dr === 'none') return null;
+    const fleet = d.fleet.filter((i) => i.state !== 'terminating');
+    const r = this.flows.dr;
+    return {
+      strategy: this.config.dr,
+      phase: d.phase,
+      share: d.share,
+      db: d.db,
+      s3: d.s3,
+      lambda: d.lambda,
+      elb: d.elb,
+      vault: d.vault,
+      fleet: fleet.map((i) => ({ id: i.id, n: i.n, state: i.state, cpu: i.state === 'running' ? r?.cpu || 0 : 0 })),
+      running: fleet.filter((i) => i.state === 'running').length,
+      rps: r ? r.rps : 0,
+      remaining: d.phase === 'rebuilding' ? Math.max(0, d.timer) : d.db === 'promoting' ? Math.max(0, d.promoteTimer) : 0,
     };
   }
 
@@ -306,6 +360,10 @@ export class Simulation {
     this.leak = { active: false, detected: false, start: -100 }; // crypto miners running on a leaked access key
     // a release being rolled out: `share` of the app traffic runs the new (buggy) version
     this.deploy = { active: false, phase: 'idle', share: 0, start: -100, canary: false };
+    this.regionDown = false; // the whole primary Region is unreachable
+    this.dr = this._drEmpty();
+    // a report running: on the production database ('prod'), as a DynamoDB Scan ('scan'), in Athena or Redshift
+    this.report = { active: false, where: null, start: -100, timer: 0 };
     this.asgDesired = 0;
     this._overSince = null;
     this._lastScaleIn = -100;
@@ -315,7 +373,7 @@ export class Simulation {
     this._maxWarned = false;
     this._noAzWarned = false;
     this._rebalancing = false;
-    this.flows = { rps: 0, targets: [], cfHit: 0, cacheHit: 0, ddosRps: 0, ddosBlocked: 0, sqliFail: 0, appRps: 0, avgCpu: 0, queueIn: 0, queueOut: 0, s3AppRps: 0, s3NatRps: 0, s3VpceRps: 0, awsFailRps: 0 };
+    this.flows = { rps: 0, targets: [], cfHit: 0, cacheHit: 0, ddosRps: 0, ddosBlocked: 0, sqliFail: 0, appRps: 0, avgCpu: 0, queueIn: 0, queueOut: 0, s3AppRps: 0, s3NatRps: 0, s3VpceRps: 0, awsFailRps: 0, drShare: 0, dr: null };
     this.metrics = {
       success: 1,
       successRaw: 1,
@@ -429,6 +487,8 @@ export class Simulation {
     if (c.cloudfront && !(prev && prev.cloudfront)) this.cfSince = initial ? -100 : this.t;
     // ElastiCache likewise starts cold when it is switched on mid-run
     if (c.cache && !(prev && prev.cache)) this.cacheSince = initial ? -100 : this.t;
+
+    this._drApply(prev, initial);
   }
 
   // how an instance reaches the Internet for its outside API calls
@@ -546,6 +606,30 @@ export class Simulation {
           ? `AWS Budgets: ngân sách ${usd(next.budget)}/tháng — gửi cảnh báo khi chi phí dự báo vượt 80% và 100%.`
           : 'Đã gỡ AWS Budgets.',
       );
+    }
+    if (prev.dr !== next.dr) {
+      const label = {
+        none: 'không có Region dự phòng',
+        backup: `backup & restore — bản sao lưu được chép sang ${DR.city}, chưa dựng gì ở đó`,
+        pilot: `pilot light — dữ liệu sao chép liên tục sang ${DR.city}, máy chủ để tắt`,
+        warm: `warm standby — một bản thu nhỏ luôn chạy sẵn ở ${DR.city}`,
+        active: `active-active — ${REGION.city} và ${DR.city} cùng phục vụ người dùng`,
+      };
+      this._emit('config', 'info', `Dự phòng thảm hoạ (DR): ${label[next.dr]}.`);
+      // switched off as a side effect: say why
+      const asked = this._drAsked;
+      if (next.dr === 'none' && prev.dr !== 'none' && asked !== 'none') {
+        if (!next.route53) this._emit('config', 'warn', 'Không có Route 53 thì không có gì chuyển người dùng sang Region khác — DR đã tắt theo.');
+        else if (!next.backup) this._emit('config', 'warn', 'Backup & restore cần AWS Backup chép bản sao sang Region khác — DR đã tắt theo.');
+      }
+    }
+    if (prev.analytics !== next.analytics) {
+      const label = {
+        none: next.database === 'none' ? 'đã gỡ — không còn database để lấy dữ liệu' : 'báo cáo chạy thẳng trên database production',
+        athena: 'database xuất sang S3 (Parquet) mỗi đêm, báo cáo chạy bằng Athena',
+        redshift: 'zero-ETL chép mọi thay đổi sang Redshift Serverless sau vài giây, báo cáo chạy ở đó',
+      };
+      this._emit('config', 'info', `Phân tích dữ liệu: ${label[next.analytics]}.`);
     }
   }
 
@@ -667,12 +751,15 @@ export class Simulation {
     this._lifecycle(dt);
     this._restoreTick(dt);
     this._deployTick(dt);
+    this._reportTick(dt);
+    this._drTick(dt);
     this._hcClock += dt;
+    // with the whole Region gone its load balancer and Auto Scaling are gone too
     if (this._hcClock >= HEALTH.interval - 1e-9) {
       this._hcClock = 0;
-      this._healthChecks();
+      if (!this.regionDown) this._healthChecks();
     }
-    if (this.config.compute === 'ec2' && this.config.asg) {
+    if (this.config.compute === 'ec2' && this.config.asg && !this.regionDown) {
       this._asgClock += dt;
       if (this._asgClock >= 1 - 1e-9) {
         this._asgClock = 0;
@@ -774,7 +861,8 @@ export class Simulation {
   // AWS Backup restore in progress: the data is back once the new copy is ready
   _restoreTick(dt) {
     const d = this.data;
-    if (!d.restoring) return;
+    // (the restore runs in the primary Region: it waits for the Region like everything else)
+    if (!d.restoring || this.regionDown) return;
     d.timer -= dt;
     if (d.timer > 0) return;
     d.restoring = false;
@@ -944,13 +1032,19 @@ export class Simulation {
   // route this step's traffic through the architecture
   _route(dt) {
     const c = this.config;
-    const rps = this.users * REQ_PER_USER;
+    const total = this.users * REQ_PER_USER;
+    // Route 53 sends `drShare` of the users to the DR Region — half of them when active-active, all
+    // of them after a failover. Everything below up to the DR part is the primary Region's share.
+    const drShare = c.dr === 'none' ? 0 : this.dr.share;
+    const down = this.regionDown;
+    const rps = total * (1 - drShare);
     const staticRps = rps * STATIC_SHARE;
     const dynRps = rps - staticRps;
     const f = {
-      rps,
-      staticRps,
-      dynRps,
+      rps: total,
+      drShare,
+      regionDown: down,
+      dr: null,
       staticShare: STATIC_SHARE,
       route53: c.route53,
       cf: c.cloudfront,
@@ -971,6 +1065,7 @@ export class Simulation {
       db: c.database,
       dbTarget: null,
       dbFail: 0,
+      reportHit: false, // a report is hogging the production database
       appRps: 0,
       avgCpu: 0,
       outboundShare: NAT.outboundShare,
@@ -1000,7 +1095,10 @@ export class Simulation {
       edge = staticRps * f.cfHit;
       miss = staticRps - edge;
     }
-    const s3 = c.s3 ? miss : 0;
+    // the primary Region's bucket is gone with it; CloudFront's origin group then fetches the misses
+    // from the replica bucket in the DR Region, request by request
+    f.s3Failover = down && c.cloudfront && this.dr.s3 === 'ready';
+    const s3 = c.s3 && (!down || f.s3Failover) ? miss : 0;
 
     // DDoS: a flood of junk requests hits the same entry point as real traffic. Shield is the
     // dedicated defence (blocks almost all of it); a WAF rate-based rule alone helps some but
@@ -1089,7 +1187,8 @@ export class Simulation {
       this.lambda.coldRate = 0;
     } else {
       entryMs = APIGW.ms;
-      const allowed = Math.min(appRps, APIGW.limit);
+      // with the Region gone, API Gateway and Lambda there answer nothing at all
+      const allowed = down ? 0 : Math.min(appRps, APIGW.limit);
       f.gwFail = appRps > 0 ? 1 - allowed / appRps : 0;
       const need = allowed * LAMBDA.duration;
       const conc = Math.min(need, LAMBDA.limit);
@@ -1122,7 +1221,7 @@ export class Simulation {
           `Lambda chạm giới hạn ${LAMBDA.limit} bản chạy đồng thời → request vượt mức bị từ chối (lỗi 429).`,
         );
       } else if (f.lambdaFail === 0) this._lambdaWarned = false;
-      if (f.gwFail > 0.01 && !this._gwWarned) {
+      if (f.gwFail > 0.01 && !down && !this._gwWarned) {
         this._gwWarned = true;
         this._emit('gwThrottle', 'error', 'API Gateway chạm giới hạn 10.000 request/giây → trả lỗi 429 Too Many Requests.');
       } else if (f.gwFail === 0) this._gwWarned = false;
@@ -1133,7 +1232,8 @@ export class Simulation {
     let deqRps = 0;
     if (c.queue) {
       const q = this.queue;
-      if (!this.extDown) deqRps = Math.min(SQS.workerRate, enqRps + (dt > 0 ? q.depth / dt : 0));
+      // (the queue and its worker live in the primary Region: they wait for it with everything else)
+      if (!this.extDown && !down) deqRps = Math.min(SQS.workerRate, enqRps + (dt > 0 ? q.depth / dt : 0));
       if (dt > 0) {
         q.depth = Math.max(0, q.depth + (enqRps - deqRps) * dt);
         if (q.depth >= SQS.backlogWarn && !q.warned) {
@@ -1163,7 +1263,7 @@ export class Simulation {
     if (c.database === 'rds') {
       // ElastiCache sits in front of RDS: it absorbs a share of reads straight from
       // memory, so only the rest (`dbLoad`) ever reaches the database.
-      if (c.cache) f.cacheHit = CACHE.hitRatio * (1 - Math.exp(-(this.t - this.cacheSince) / CACHE.warmTime));
+      if (c.cache && !down) f.cacheHit = CACHE.hitRatio * (1 - Math.exp(-(this.t - this.cacheSince) / CACHE.warmTime));
       const cacheServed = dynServed * f.cacheHit;
       const dbLoad = dynServed - cacheServed;
       const p = this.db.find((n) => n.role === 'primary' && n.state === 'ok');
@@ -1175,12 +1275,17 @@ export class Simulation {
         f.dbTarget = (this.db.find((n) => n.role === 'primary') || this.db[0] || {}).id || null;
         dbMs = CACHE.queryMs;
       } else {
+        // a heavy report on the same database: every query waits behind its scan, some time out
+        const report = this.report.active && this.report.where === 'prod';
         const rho = dbLoad / RDS.capacity;
-        p.load = rho;
-        const dbOk = Math.min(dbLoad, RDS.capacity);
+        p.load = report ? Math.max(1, rho) : rho;
+        let dbOk = Math.min(dbLoad, RDS.capacity);
+        if (report) dbOk *= 1 - REPORT.failShare;
+        const queryMs = RDS.queryMs * queue(rho) + (report ? REPORT.extraMs : 0);
         dynOk = cacheServed + dbOk;
         f.dbFail = dynServed > 0 ? 1 - dynOk / dynServed : 0;
-        dbMs = dynServed > 0 ? (cacheServed * CACHE.queryMs + dbOk * RDS.queryMs * queue(rho)) / dynServed : RDS.queryMs * queue(rho);
+        f.reportHit = report;
+        dbMs = dynServed > 0 ? (cacheServed * CACHE.queryMs + dbOk * queryMs) / dynServed : queryMs;
         f.dbTarget = p.id;
       }
     } else if (c.database === 'dynamodb') {
@@ -1212,17 +1317,64 @@ export class Simulation {
     // a synchronous outside call keeps the user waiting; dropping the order into SQS does not
     const extMs = NAT.outboundShare * (c.queue ? SQS.enqueueMs : EXT.ms);
 
-    const ok = edge + s3 + appStaticServed + dynOk;
     const appMs = appServed > 0 ? appMsSum / appServed : 0;
     const cfPass = c.cloudfront ? 5 : 0;
-    const s3Ms = c.cloudfront ? CF.edgeMs + CF.originMs + S3.ms : REGION_MS + S3.ms;
+    const s3Ms = (c.cloudfront ? CF.edgeMs + CF.originMs + S3.ms : REGION_MS + S3.ms) + (f.s3Failover ? DR.extraMs : 0);
     const toApp = REGION_MS + cfPass + entryMs + appMs;
-    const latencySum =
-      edge * CF.edgeMs + s3 * s3Ms + appStaticServed * toApp + dynOk * (toApp + dbMs + extMs);
+    const latency1 = edge * CF.edgeMs + s3 * s3Ms + appStaticServed * toApp + dynOk * (toApp + dbMs + extMs);
 
-    f.served = { edge, s3, app: appServed, appStatic: appStaticServed, dyn: dynOk, total: ok };
+    // the DR Region's share goes through its own copy of the stack
+    const dr = drShare > 0 ? this._routeDr(total * drShare, f) : null;
+    f.dr = dr;
+    const ok = edge + s3 + appStaticServed + dynOk + (dr ? dr.ok : 0);
+    const latencySum = latency1 + (dr ? dr.latencySum : 0);
+    f.served = { edge: edge + (dr ? dr.edge : 0), s3, app: appServed, appStatic: appStaticServed, dyn: dynOk, total: ok };
     this.flows = f;
-    this._last = { ok, total: rps, latencySum, s3, dynOk, appServed, allowed: Math.min(appRps, APIGW.limit), natRps, enqRps, enqNatRps, deqRps, s3NatRps };
+    this._last = { ok, total, latencySum, s3, dynOk, appServed, allowed: down ? 0 : Math.min(appRps, APIGW.limit), natRps, enqRps, enqNatRps, deqRps, s3NatRps };
+  }
+
+  // the DR Region's part of the traffic, through the same pipeline simplified: CloudFront (global,
+  // shares its cache), the replica bucket, the fleet or Lambda there and its copy of the data
+  _routeDr(rps, f) {
+    const c = this.config;
+    const d = this.dr;
+    const staticRps = rps * STATIC_SHARE;
+    const dynRps = rps - staticRps;
+    const edge = staticRps * f.cfHit;
+    const miss = staticRps - edge;
+    const s3 = c.s3 && d.s3 === 'ready' ? miss : 0;
+    const appRps = dynRps + (c.s3 ? 0 : miss);
+    const running = d.fleet.filter((i) => i.state === 'running').length;
+    let appServed = 0;
+    let cpu = 0;
+    let appMs = 0;
+    if (c.compute === 'ec2') {
+      // no load balancer: users only reach one server there too
+      const serving = c.elb ? running : Math.min(1, running);
+      appServed = Math.min(appRps, serving * EC2.capacity);
+      cpu = serving ? appRps / (serving * EC2.capacity) : 0;
+      appMs = (c.elb ? ELB.ms : 0) + EC2.procMs * queue(cpu);
+    } else if (d.lambda) {
+      appServed = Math.min(appRps, APIGW.limit, LAMBDA.limit / LAMBDA.duration);
+      appMs = APIGW.ms + LAMBDA.warmMs;
+    }
+    const dynServed = appRps > 0 ? (appServed * dynRps) / appRps : 0;
+    const appStatic = appServed - dynServed;
+    // a global table, a promoted replica or a restored copy takes everything; a replica not promoted
+    // yet still reads, but the writes it forwards to the primary fail while that Region is gone
+    let dynOk = 0;
+    if (d.db === 'ready') dynOk = dynServed;
+    else if (d.db === 'replica' || d.db === 'promoting') dynOk = this.regionDown ? dynServed * (1 - DR.writeShare) : dynServed;
+    if (c.database === 'rds') dynOk = Math.min(dynOk, RDS.capacity);
+    // the outside API (payment, email) is the same provider whichever Region calls it
+    if (this.extDown && !c.queue) dynOk *= 1 - NAT.outboundShare;
+    const ms = REGION_MS + DR.extraMs + (c.cloudfront ? 5 : 0);
+    const dbMs = c.database === 'rds' ? RDS.queryMs : c.database === 'dynamodb' ? DDB.queryMs : 1;
+    const extMs = NAT.outboundShare * (c.queue ? SQS.enqueueMs : EXT.ms);
+    const s3Ms = c.cloudfront ? CF.edgeMs + CF.originMs + S3.ms + DR.extraMs : REGION_MS + DR.extraMs + S3.ms;
+    const latencySum = edge * CF.edgeMs + s3 * s3Ms + appStatic * (ms + appMs) + dynOk * (ms + appMs + dbMs + extMs);
+    const ok = edge + s3 + appStatic + dynOk;
+    return { rps, edge, s3, appRps, appServed, dynServed, dynOk, ok, latencySum, running, cpu, appFail: appRps > 0 ? 1 - appServed / appRps : 0, dbFail: dynServed > 0 ? 1 - dynOk / dynServed : 0 };
   }
 
   _metrics(dt) {
@@ -1267,7 +1419,8 @@ export class Simulation {
       elb: c.compute === 'ec2' && c.elb ? ELB.costPerHour + f.appRps * ELB.lcuPerRps * ELB.lcuCost : 0,
       rds: c.database === 'rds' ? this.db.length * RDS.costPerHour : 0,
       cache: c.database === 'rds' && c.cache ? CACHE.costPerHour : 0,
-      dynamodb: c.database === 'dynamodb' ? perHour(r.dynOk) * DDB.costPerMillion : 0,
+      // (plus the read units of a report's full-table Scan while it runs)
+      dynamodb: c.database === 'dynamodb' ? perHour(r.dynOk) * DDB.costPerMillion + (this.report.active && this.report.where === 'scan' ? REPORT.scanCostPerHour : 0) : 0,
       lambda: c.compute === 'lambda' ? perHour(r.appServed) * LAMBDA.costPerMillion : 0,
       apigw: c.compute === 'lambda' ? perHour(r.allowed) * APIGW.costPerMillion : 0,
       s3: c.s3 ? S3.storagePerHour + perHour(r.s3) * S3.costPerMillion : 0,
@@ -1286,6 +1439,11 @@ export class Simulation {
       leak: this.leak.active ? LEAK.costPerHour : 0,
       waf: c.waf ? WAF.costPerHour + perHour(f.rps) * WAF.costPerMillion : 0,
       // Shield Standard is free — only Shield Advanced costs money, not modelled here
+      // the whole copy of the stack in the DR Region, idle or not
+      dr: this._drCost(r),
+      // where reports run: the lake (S3 + nightly export; Athena queries cost cents), or Redshift
+      // Serverless kept busy by the zero-ETL stream of changes
+      analytics: c.analytics === 'athena' ? REPORT.lakeCostPerHour : c.analytics === 'redshift' ? REPORT.redshiftCostPerHour : 0,
     };
     m.costBreakdown = b;
     m.cost = Object.values(b).reduce((x, y) => x + y, 0);
@@ -1726,10 +1884,345 @@ export class Simulation {
     return true;
   }
 
+  // the sales team's month-end report: revenue by province and month over two years. Where it runs
+  // decides who pays: the production database (every order waits behind it), a DynamoDB Scan (slow
+  // and billed per read), or a copy built for analytics — Athena on S3, Redshift via zero-ETL
+  _report() {
+    const c = this.config;
+    if (c.database === 'none') {
+      this._emit('noop', 'warn', 'Kiến trúc này chưa có database nên chưa có dữ liệu đơn hàng để làm báo cáo — hãy thêm RDS hoặc DynamoDB trước.');
+      return false;
+    }
+    if (this.report.active) {
+      this._emit('noop', 'warn', 'Báo cáo trước vẫn đang chạy.');
+      return false;
+    }
+    const where = c.analytics !== 'none' ? c.analytics : c.database === 'rds' ? 'prod' : 'scan';
+    const time = { prod: REPORT.prodTime, scan: REPORT.scanTime, athena: REPORT.athenaTime, redshift: REPORT.redshiftTime }[where];
+    this._startScenario('report', { where });
+    this.report = { active: true, where, start: this.t, timer: time };
+    const text = {
+      prod: 'Đội kinh doanh chạy báo cáo doanh thu 2 năm theo tỉnh, theo tháng ngay trên RDS production: database phải quét hàng trăm triệu dòng đơn hàng…',
+      scan: 'Đội kinh doanh cần doanh thu 2 năm theo tỉnh: DynamoDB không có GROUP BY nên phải Scan cả bảng rồi cộng trong code…',
+      athena: 'Đội kinh doanh chạy báo cáo doanh thu 2 năm bằng Athena, trên file Parquet xuất từ database đêm qua.',
+      redshift: 'Đội kinh doanh chạy báo cáo doanh thu 2 năm trên Redshift — bản sao do zero-ETL giữ, chỉ trễ vài giây.',
+    }[where];
+    this._emit('reportStart', where === 'prod' || where === 'scan' ? 'warn' : 'info', text);
+    if (where === 'prod' && c.rdsMultiAz) this._emit('reportStandby', 'info', 'Standby của RDS Multi-AZ không nhận truy vấn — nó chỉ chờ failover, nên không chia được tải của báo cáo.');
+    return true;
+  }
+
+  // ── disaster recovery in a second Region ──────────────────────────────────
+
+  _drEmpty() {
+    return { phase: 'none', share: 0, fleet: [], seq: 0, clock: 0, overSince: null, lastScaleIn: -100, db: 'none', s3: 'none', lambda: false, elb: false, vault: false, built: false, timer: 0, promoteTimer: 0 };
+  }
+
+  // the standby copy of the stack each strategy keeps in the DR Region
+  _drApply(prev, initial) {
+    const c = this.config;
+    if (c.dr === 'none') {
+      this.dr = this._drEmpty();
+      return;
+    }
+    const d = this.dr;
+    if (this.regionDown) {
+      // chosen while the primary Region is down: there is nothing left to copy the data from
+      if (d.phase === 'none') {
+        d.phase = 'standby';
+        this._emit('drTooLate', 'error', `Region ${REGION.code} đã sập: không còn gì để sao chép sang ${DR.city}. DR phải dựng — và sao chép dữ liệu — trước khi thảm hoạ xảy ra.`);
+      }
+      return;
+    }
+    // failing back: the DR Region keeps every user until the primary Region can serve them again
+    if (d.share === 1 && d.phase !== 'none') {
+      d.phase = 'failback';
+      return;
+    }
+    // every strategy but backup & restore keeps a live copy of the data (database replica or global
+    // table, S3 Cross-Region Replication, replicated server disks); backup & restore only copies backups
+    const live = c.dr !== 'backup';
+    d.phase = 'standby';
+    d.share = c.dr === 'active' ? 0.5 : 0;
+    d.vault = c.dr === 'backup';
+    d.built = live;
+    d.lambda = c.compute === 'lambda' && live;
+    d.elb = c.compute === 'ec2' && c.elb && live;
+    d.db = !live ? 'none' : c.database === 'rds' ? 'replica' : 'ready';
+    d.s3 = c.s3 && live ? 'ready' : 'none';
+    d.timer = 0;
+    d.promoteTimer = 0;
+    this._drScale(initial ? 'instant' : 'config');
+  }
+
+  // EC2 the DR Region should run now: none until the stack exists; on passive standby warm keeps a
+  // small copy and pilot light none; while it serves users, what Auto Scaling (or the fixed fleet) gives
+  _drWant() {
+    const c = this.config;
+    const d = this.dr;
+    if (c.compute !== 'ec2' || c.dr === 'none' || !d.built) return 0;
+    if (d.share === 0) return c.dr === 'warm' ? DR.warmFleet : 0;
+    if (!c.asg) return Math.max(1, c.ec2.a + c.ec2.b);
+    const byLoad = Math.ceil((this.flows.dr?.appRps || 0) / (EC2.capacity * ASG.targetCpu));
+    return clamp(byLoad, c.asgMin, c.asgMax);
+  }
+
+  // launch or retire DR servers toward _drWant and return how many were launched. `mode`: 'instant'
+  // (built with the architecture), 'config' (a palette change: quick, extras go at once) or 'scale'
+  // (Auto Scaling: full boot time, scale-in after a delay)
+  _drScale(mode = 'scale') {
+    const d = this.dr;
+    const want = Math.min(this._drWant(), ASG.limit);
+    const active = d.fleet.filter((i) => i.state !== 'terminating');
+    if (active.length < want) {
+      const boot = mode === 'instant' ? 0 : mode === 'config' ? EC2.provisionTime : EC2.bootTime;
+      const used = new Set(d.fleet.map((i) => i.slot));
+      let slot = 0;
+      for (let k = active.length; k < want; k++) {
+        while (used.has(slot)) slot++;
+        used.add(slot);
+        d.fleet.push({ id: `i-0${this._hexId()}`, n: ++d.seq, slot, state: boot > 0 ? 'pending' : 'running', timer: boot });
+      }
+      d.overSince = null;
+      return want - active.length;
+    }
+    if (active.length > want) {
+      const newest = active.sort((x, y) => y.n - x.n);
+      if (mode !== 'scale') {
+        newest.slice(0, active.length - want).forEach((i) => Object.assign(i, { state: 'terminating', timer: EC2.terminateTime }));
+      } else {
+        if (d.overSince == null) d.overSince = this.t;
+        if (this.t - d.overSince >= ASG.scaleInDelay && this.t - d.lastScaleIn >= ASG.scaleInEvery) {
+          Object.assign(newest[0], { state: 'terminating', timer: EC2.terminateTime });
+          d.lastScaleIn = this.t;
+        }
+      }
+      return 0;
+    }
+    d.overSince = null;
+    return 0;
+  }
+
+  _drReady() {
+    const d = this.dr;
+    const app = this.config.compute === 'ec2' ? d.fleet.some((i) => i.state === 'running') : d.lambda;
+    return app && d.db === 'ready';
+  }
+
+  _drTick(dt) {
+    const c = this.config;
+    const d = this.dr;
+    if (c.dr === 'none') return;
+    for (const i of d.fleet) {
+      if (i.state !== 'pending' && i.state !== 'terminating') continue;
+      i.timer -= dt;
+      if (i.timer > 0) continue;
+      if (i.state === 'pending') {
+        i.state = 'running';
+        i.timer = 0;
+      } else i.removed = true;
+    }
+    if (d.fleet.some((i) => i.removed)) d.fleet = d.fleet.filter((i) => !i.removed);
+    if (d.db === 'promoting') {
+      d.promoteTimer -= dt;
+      if (d.promoteTimer <= 0) {
+        d.db = 'ready';
+        d.promoteTimer = 0;
+        this._emit('drPromoted', 'success', `Database ở ${DR.city} đã thành primary mới: nhận cả đọc lẫn ghi.`);
+      }
+    }
+    if (d.phase === 'rebuilding') {
+      d.timer -= dt;
+      if (d.timer <= 0) this._drRebuilt();
+    }
+    d.clock += dt;
+    if (d.clock >= 1 - 1e-9) {
+      d.clock = 0;
+      const n = this._drScale('scale');
+      if (n > 0 && this.regionDown) this._emit('drScaleOut', 'info', `Auto Scaling ở ${DR.city} thêm ${n} EC2 vì CPU vượt mục tiêu — người dùng dồn cả sang đây.`);
+    }
+    if (d.phase === 'recovering' && this._drReady()) {
+      d.phase = 'live';
+      if (this.scenario) this.scenario.liveAt = this.t;
+      this._emit('drLive', 'success', `${DR.city} đã gánh toàn bộ người dùng: website chạy lại từ Region dự phòng.`);
+    }
+    if (d.phase === 'failback' && this._primaryReady()) {
+      d.share = 0;
+      this._drApply(this.config, false);
+      this._emit('drFailbackDone', 'success', `${REGION.city} đã sẵn sàng: Route 53 chuyển người dùng về, ${DR.city} trở lại vai trò dự phòng.`);
+    }
+  }
+
+  // the primary Region can take its users back: servers in service and the database up
+  _primaryReady() {
+    const c = this.config;
+    if (this.regionDown) return false;
+    const app = c.compute !== 'ec2' || (c.elb ? this.instances.some((i) => i.registered && i.state === 'running') : this._primaryInstance()?.state === 'running');
+    const db = c.database !== 'rds' || this.db.some((n) => n.role === 'primary' && n.state === 'ok');
+    return app && db;
+  }
+
+  // the DR Region's running cost ($/hour): the copies, replica, servers and load balancer kept there
+  _drCost(r) {
+    const c = this.config;
+    const d = this.dr;
+    if (c.dr === 'none' || !r) return 0;
+    const dr = this.flows.dr;
+    const fleet = d.fleet.filter((i) => i.state !== 'terminating').length;
+    let h = d.vault ? DR.copyCostPerHour : 0;
+    h += fleet * EC2.costPerHour;
+    if (d.elb) h += ELB.costPerHour + (dr ? dr.appRps : 0) * ELB.lcuPerRps * ELB.lcuCost;
+    // a private fleet needs its own NAT Gateways there as well
+    if (fleet > 0 && c.appSubnet === 'private') h += (c.nat === 'single' ? 1 : c.nat === 'none' ? 0 : 2) * NAT.costPerHour;
+    if (c.database === 'rds' && d.db !== 'none') h += RDS.costPerHour;
+    // a global table bills every write once more in each Region it is copied to
+    if (c.database === 'dynamodb' && d.db !== 'none') h += perHour(r.dynOk + (dr ? dr.dynOk : 0)) * DDB.costPerMillion;
+    if (c.s3 && d.s3 === 'ready') h += S3.storagePerHour + perHour(dr ? dr.s3 : 0) * S3.costPerMillion;
+    if (c.compute === 'lambda' && d.lambda && dr) h += perHour(dr.appServed) * (LAMBDA.costPerMillion + APIGW.costPerMillion);
+    return h;
+  }
+
+  // the whole primary Region drops off the network — a power or network event bigger than any AZ.
+  // Every regional service there stops answering; only global ones (Route 53, CloudFront's edge
+  // cache, IAM) keep working. What happens next is up to the DR strategy.
+  _regionDown() {
+    const c = this.config;
+    if (this.regionDown) {
+      this._emit('noop', 'warn', `Region ${REGION.code} vẫn đang sập.`);
+      return false;
+    }
+    this._startScenario('regionDown', { strategy: c.dr, drCost: this._drCost(this._last) });
+    this.regionDown = true;
+    for (const az of AZ_IDS) {
+      this.az[az] = 'destroyed';
+      this.azSince[az] = this.t;
+    }
+    this._emit('regionDown', 'error', `Sự cố diện rộng: cả Region ${REGION.code} (${REGION.city}) mất kết nối — mọi AZ, mọi dịch vụ trong Region đều không phản hồi!`);
+    for (const i of this.instances) this._failInstance(i, 'region');
+    for (const n of this.db) Object.assign(n, { state: 'failed', cause: 'region', timer: 0, autoRecover: false });
+    for (const n of this.nat) n.state = 'failed';
+    const lost = c.compute === 'ec2' ? 'EC2, Load Balancer' : 'API Gateway, Lambda';
+    const store = c.database === 'rds' ? ', RDS' : c.database === 'dynamodb' ? ', DynamoDB' : '';
+    this._emit('regionLost', 'error', `${lost}${store}${c.s3 ? ', S3' : ''}${c.queue ? ', SQS' : ''} đều nằm trong Region này — Multi-AZ không đỡ được vì mọi AZ cùng sập. Chỉ dịch vụ toàn cầu (Route 53${c.cloudfront ? ', cache của CloudFront' : ''}) còn chạy.`);
+    if (c.dr === 'none') {
+      this._emit('drNone', 'error', `Không có Region dự phòng: chỉ còn cách chờ AWS khôi phục ${REGION.city} — có thể mất nhiều giờ.`);
+      return true;
+    }
+    this.dr.phase = 'detecting';
+    this._emit(
+      'drDetecting',
+      'info',
+      c.dr === 'active'
+        ? `${DR.city} vẫn phục vụ phần người dùng của mình. Route 53 health check bắt đầu báo lỗi cho ${REGION.city}…`
+        : `Route 53 health check bắt đầu báo lỗi cho endpoint ở ${REGION.city}…`,
+    );
+    this._schedule(DR.detect, () => this._drDetected(), 'dr');
+    return true;
+  }
+
+  _drDetected() {
+    const c = this.config;
+    const d = this.dr;
+    if (!this.regionDown || c.dr === 'none') return;
+    if (c.dr === 'warm' || c.dr === 'active') {
+      this._emit(
+        'drFailover',
+        'warn',
+        c.dr === 'active'
+          ? `Route 53: ${REGION.city} trượt health check 3 lần liên tiếp → không trả địa chỉ ở đó nữa, mọi người dùng vào ${DR.city}.`
+          : `Route 53 failover: ${REGION.city} trượt health check 3 lần liên tiếp → chuyển toàn bộ traffic sang bản warm standby ở ${DR.city}.`,
+      );
+      this._drActivate();
+      return;
+    }
+    d.phase = 'deciding';
+    this._emit('drDecide', 'warn', `Health check báo ${REGION.city} sập, nhưng ${c.dr === 'pilot' ? 'pilot light' : 'backup & restore'} không tự chuyển: người trực xác nhận thảm hoạ rồi chạy runbook (thực tế 15–30 phút)…`);
+    this._schedule(DR.decide, () => this._drActivate(), 'dr');
+  }
+
+  // fail over: Route 53 (or the runbook, flipping an ARC routing control) sends every user to the DR Region
+  _drActivate() {
+    const c = this.config;
+    const d = this.dr;
+    if (!this.regionDown || c.dr === 'none') return;
+    d.share = 1;
+    if (c.dr === 'backup') {
+      d.phase = 'rebuilding';
+      d.timer = DR.rebuild;
+      this._emit('drRebuild', 'warn', `Dựng lại toàn bộ hạ tầng ở ${DR.city} từ CloudFormation và khôi phục dữ liệu từ bản sao lưu gần nhất (thực tế vài giờ)…`);
+      return;
+    }
+    d.phase = 'recovering';
+    if (c.dr === 'pilot') {
+      this._emit(
+        'drSwitchOn',
+        'info',
+        c.compute === 'ec2'
+          ? `Runbook: bật máy chủ ở ${DR.city} từ AMI có sẵn (Auto Scaling từ 0 máy lên), chuyển DNS sang ${DR.city}.`
+          : `Runbook: API Gateway và Lambda ở ${DR.city} đã triển khai sẵn — chỉ cần chuyển DNS sang.`,
+      );
+    }
+    if (d.db === 'replica') {
+      d.db = 'promoting';
+      d.promoteTimer = DR.promote;
+      this._emit('drPromote', 'info', `Promote bản sao database ở ${DR.city} thành primary để nhận ghi (Aurora Global Database: dưới 1 phút)…`);
+    }
+    const n = this._drScale('scale');
+    if (n > 0 && c.dr !== 'pilot') this._emit('drScaleOut', 'info', `Auto Scaling ở ${DR.city} thêm ${n} EC2 để gánh toàn bộ người dùng.`);
+  }
+
+  // backup & restore: the stack exists again in the DR Region, its servers now booting
+  _drRebuilt() {
+    const c = this.config;
+    const d = this.dr;
+    Object.assign(d, { built: true, phase: 'recovering', timer: 0, lambda: c.compute === 'lambda', elb: c.compute === 'ec2' && c.elb, db: 'ready', s3: c.s3 ? 'ready' : 'none' });
+    this._drScale('scale');
+    this._emit('drRebuilt', 'info', `Hạ tầng ở ${DR.city} đã dựng xong, dữ liệu khôi phục tới bản sao lưu gần nhất${c.compute === 'ec2' ? ' — máy chủ đang khởi động' : ''}.`);
+  }
+
+  // a report running somewhere: done once its time is up
+  _reportTick(dt) {
+    const r = this.report;
+    if (!r.active) return;
+    // the database it was reading is gone: nothing left to report on
+    if (this.config.database === 'none') {
+      this.report = { active: false, where: null, start: -100, timer: 0 };
+      this._emit('reportStopped', 'warn', 'Không còn database — báo cáo bị huỷ giữa chừng.');
+      return;
+    }
+    r.timer -= dt;
+    if (r.timer > 0) return;
+    r.active = false;
+    r.timer = 0;
+    const done = {
+      prod: 'Báo cáo xong sau khoảng 25 phút (mô phỏng 16 giây): database được thả ra, website nhanh trở lại.',
+      scan: 'Scan xong cả bảng DynamoDB và cộng số liệu trong code: có báo cáo, nhưng mất nửa giờ và tốn đơn vị đọc cho cả bảng.',
+      athena: 'Athena trả báo cáo sau vài giây: chỉ quét cột cần trong file Parquet của đêm qua, database không hề hay biết.',
+      redshift: 'Redshift trả báo cáo sau vài giây: dữ liệu chỉ trễ vài giây so với database, website không bị ảnh hưởng.',
+    }[r.where];
+    this._emit('reportDone', 'success', done);
+  }
+
   _repair() {
     if (this.scenario) this._finishScenario(true);
     this.lesson = null;
     const c = this.config;
+    // a Region coming back brings its servers, databases and NAT back as they were: nothing was
+    // destroyed, only cut off
+    if (this.regionDown) {
+      this.regionDown = false;
+      for (const az of AZ_IDS) {
+        this.az[az] = 'ok';
+        this.azSince[az] = this.t;
+      }
+      this._emit('regionRestored', 'success', `Region ${REGION.code} (${REGION.city}) hoạt động trở lại.`);
+      if (c.dr !== 'none' && this.dr.share === 1) {
+        this._emit('drFailback', 'info', `Failback: chép dữ liệu mới từ ${DR.city} ngược về ${REGION.city} rồi mới chuyển người dùng về — thực tế làm có kế hoạch, vào giờ vắng khách.`);
+      }
+      for (const n of this.db) if (n.cause === 'region') Object.assign(n, { state: 'ok', cause: null });
+      for (const n of this.nat) n.state = 'ok';
+    }
+    this._clearTimers('dr');
     for (const az of AZ_IDS) {
       if (this.az[az] !== 'ok') {
         this.az[az] = 'ok';
@@ -1740,7 +2233,7 @@ export class Simulation {
     const rebooted = [];
     for (const i of this.instances) {
       if (i.state !== 'failed') continue;
-      if (c.asg) this._terminate(i);
+      if (c.asg && i.cause !== 'region') this._terminate(i);
       else {
         i.state = 'pending';
         i.timer = EC2.bootTime * 0.6;
@@ -1790,6 +2283,8 @@ export class Simulation {
     this.deploy = { active: false, phase: 'idle', share: 0, start: -100, canary: false };
     if (this.leak.active) this._emit('leakStopped', 'warn', 'Quản trị viên vô hiệu hoá access key bị lộ và xoá các máy đào coin — sau khi chúng đã chạy một lúc.');
     this.leak = { active: false, detected: false, start: -100 };
+    if (this.report.active) this._emit('reportStopped', 'warn', 'Quản trị viên huỷ báo cáo đang chạy.');
+    this.report = { active: false, where: null, start: -100, timer: 0 };
     this.night = false;
     this.targetUsers = USERS.normal;
     this._ddosRps = 0;
@@ -1856,6 +2351,8 @@ export class Simulation {
       natHoursMin: this._natHours(),
       natWaited: false, // servers had no way out while a Regional NAT Gateway was still expanding
       dbPrimaryAz: dbPrimary ? dbPrimary.az : null,
+      drPeak: 0, // most servers the DR Region ran
+      liveAt: null, // when the DR Region took every user
       cfgChanged: false,
     };
     this.scenario = sc;
@@ -1890,6 +2387,7 @@ export class Simulation {
     sc.natS3CostMax = Math.max(sc.natS3CostMax, gbPerHour(f.s3NatRps * S3APP.kbPerCall) * NAT.costPerGB);
     sc.natHoursMin = Math.min(sc.natHoursMin, this._natHours());
     if ((f.outFailRps > 0 || f.awsFailRps > 0) && f.targets.some((t) => t.out?.expanding)) sc.natWaited = true;
+    sc.drPeak = Math.max(sc.drPeak, this.dr.fleet.filter((i) => i.state !== 'terminating').length);
     // overloaded even though Auto Scaling already runs every instance it is allowed
     const c = this.config;
     if (c.compute === 'ec2' && c.asg && f.avgCpu > 1) {
@@ -1898,7 +2396,7 @@ export class Simulation {
     }
 
     const elapsed = this.t - sc.start;
-    const quick = sc.action === 'quake' || sc.action === 'serverFail' || sc.action === 'dbFail';
+    const quick = sc.action === 'quake' || sc.action === 'serverFail' || sc.action === 'dbFail' || sc.action === 'regionDown' || sc.action === 'report';
     const settled = quick && elapsed >= 8 && sc.okStreak >= 5 && !this._busy();
     if (this.t >= sc.end - 1e-9 || settled) this._finishScenario(false);
   }
@@ -1907,6 +2405,7 @@ export class Simulation {
   settled() {
     return (
       !this._busy() &&
+      !this.regionDown &&
       AZ_IDS.every((az) => this.az[az] === 'ok') &&
       !this.instances.some((i) => i.state === 'failed') &&
       !this.db.some((n) => n.state === 'failed') &&
@@ -1915,6 +2414,7 @@ export class Simulation {
       !this.data.wiped &&
       !this.leak.active &&
       !this.deploy.active &&
+      !this.report.active &&
       (this.metrics.status === 'ok' || this.metrics.status === 'slow')
     );
   }
@@ -1924,7 +2424,11 @@ export class Simulation {
       this.instances.some((i) => i.state === 'pending' || i.state === 'terminating') ||
       this.db.some((n) => n.state === 'promoting' || n.state === 'creating' || n.autoRecover) ||
       this.nat.some((n) => n.state === 'expanding') ||
-      this.data.restoring
+      this.data.restoring ||
+      this.report.active ||
+      this.dr.fleet.some((i) => i.state === 'pending' || i.state === 'terminating') ||
+      this.dr.db === 'promoting' ||
+      ['detecting', 'deciding', 'rebuilding', 'recovering', 'failback'].includes(this.dr.phase)
     );
   }
 

@@ -56,6 +56,15 @@ const GLYPH = {
       <path d="M12 8v4.2l3 1.8" />
     </>
   ),
+  // disaster recovery: the primary Region failing over to a second one
+  dr: (
+    <>
+      <rect x="2.5" y="4.5" width="8.5" height="6.5" rx="1.5" />
+      <rect x="13" y="13" width="8.5" height="6.5" rx="1.5" />
+      <path d="M6.75 11v4.75a1.5 1.5 0 0 0 1.5 1.5H13" />
+      <path d="M10.8 15.2l2.2 2.05-2.2 2.05" />
+    </>
+  ),
   elb: (
     <>
       <circle cx="12" cy="12" r="2.6" />
@@ -155,6 +164,50 @@ const GLYPH = {
       <circle cx="18" cy="12" r="3.5" />
       <path d="M7.5 12h7" />
       <circle cx="7.5" cy="12" r="1.2" fill="currentColor" />
+    </>
+  ),
+  // VPC Peering: two VPCs joined one-to-one
+  pcx: (
+    <>
+      <rect x="2.5" y="6.5" width="7" height="11" rx="1.5" strokeDasharray="2.5 1.8" />
+      <rect x="14.5" y="6.5" width="7" height="11" rx="1.5" strokeDasharray="2.5 1.8" />
+      <path d="M9.5 12h5" />
+      <circle cx="12" cy="12" r="1.3" fill="currentColor" />
+    </>
+  ),
+  // Transit Gateway: one hub, every VPC a spoke
+  tgw: (
+    <>
+      <circle cx="12" cy="12" r="2.8" />
+      <circle cx="12" cy="3.6" r="1.6" />
+      <circle cx="20" cy="9.4" r="1.6" />
+      <circle cx="17" cy="19.4" r="1.6" />
+      <circle cx="7" cy="19.4" r="1.6" />
+      <circle cx="4" cy="9.4" r="1.6" />
+      <path d="M12 5.2v4M18.5 9.9l-3.8 1.2M16.1 18.1l-2.4-3.5M7.9 18.1l2.4-3.5M5.5 9.9l3.8 1.2" />
+    </>
+  ),
+  // Site-to-Site VPN & Direct Connect: two sites joined by a private link
+  vpn: (
+    <>
+      <path d="M2.5 19.5V9.5l3-2.5 3 2.5v10M15.5 19.5V9.5l3-2.5 3 2.5v10" />
+      <path d="M8.5 12h7M8.5 15.5h7" />
+    </>
+  ),
+  // Direct Connect: a dedicated line between two fixed ends
+  dx: (
+    <>
+      <circle cx="4.5" cy="12" r="2.2" />
+      <circle cx="19.5" cy="12" r="2.2" />
+      <path d="M6.7 12h10.6" strokeWidth="3" />
+      <path d="M9 7.5h6M9 16.5h6" />
+    </>
+  ),
+  // Global Accelerator: the globe and a quick path through it
+  ga: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M13.2 6.2l-3.7 6.3h4.2l-3.2 5.3" />
     </>
   ),
   iam: (
@@ -313,6 +366,52 @@ const GLYPH = {
       <path d="M2.5 17c2.4-1.9 4.6 1.9 7 0s4.6 1.9 7 0 3.4-1.4 5-.8" />
     </>
   ),
+  // SQL straight on the files of the data lake
+  athena: (
+    <>
+      <rect x="3.5" y="3.5" width="12" height="15.5" rx="1.8" />
+      <path d="M6.5 8h6M6.5 11.5h3.5" />
+      <circle cx="15.8" cy="15.8" r="3.6" />
+      <path d="M18.4 18.4l2.9 2.9" />
+    </>
+  ),
+  // ETL: raw data in, clean data out
+  glue: <path d="M3.5 5h17l-6.5 7.5v5.8l-4 2.2v-8z" />,
+  // a warehouse cylinder split into columns
+  redshift: (
+    <>
+      <ellipse cx="12" cy="6" rx="7.5" ry="2.5" />
+      <path d="M4.5 6v12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5V6" />
+      <path d="M9.5 8.4v12M14.5 8.4v12" />
+    </>
+  ),
+  quicksight: (
+    <>
+      <path d="M3.5 20.5h17" />
+      <rect x="5" y="12.5" width="3" height="8" rx="0.6" />
+      <rect x="10.5" y="8.5" width="3" height="12" rx="0.6" />
+      <rect x="16" y="4.5" width="3" height="16" rx="0.6" />
+    </>
+  ),
+  opensearch: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6.8" />
+      <path d="M15.6 15.6l5 5" />
+      <path d="M7.4 9h6.2M7.4 12.2h4" />
+    </>
+  ),
+  table: (
+    <>
+      <rect x="3.5" y="4.5" width="17" height="15" rx="1.5" />
+      <path d="M3.5 9.5h17M3.5 14.5h17M9.2 4.5v15M14.8 4.5v15" />
+    </>
+  ),
+  board: (
+    <>
+      <rect x="3" y="3.5" width="18" height="13" rx="1.8" />
+      <path d="M7 8h10M7 11.5h6.5M12 16.5v3.5M8 20h8" />
+    </>
+  ),
   eks: (
     <>
       <path d="M12 3l7.5 4.3v8.6L12 20.2l-7.5-4.3V7.3z" />
@@ -361,7 +460,7 @@ export function Glyph({ name, size = 18, stroke = 1.8 }) {
 }
 
 // model kinds without a lesson of their own take the colour of the lesson that explains them
-const KIND_TO_SERVICE = { pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
+const KIND_TO_SERVICE = { firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
 const SPECIAL = { users: ['#0ea5e9', 'users'], user: ['#0ea5e9', 'users'], external: ['#0891b2', 'foundation'] };
 
 export function ServiceIcon({ id, size = 34, glyph }) {
@@ -524,10 +623,24 @@ const UI = {
   chevronDown: <path d="M6 9l6 6 6-6" />,
   chevronUp: <path d="M6 15l6-6 6 6" />,
   bolt: <path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z" />,
+  // a whole Region cut off
+  region: (
+    <>
+      <rect x="3" y="4.5" width="18" height="15" rx="2.5" strokeDasharray="3 2" />
+      <path d="M9 9l6 6M15 9l-6 6" />
+    </>
+  ),
   bug: (
     <>
       <path d="M8 10a4 4 0 0 1 8 0v4.5a4 4 0 0 1-8 0z" />
       <path d="M12 10v8.5M4 12.5h4M16 12.5h4M5 7.5l3 2M19 7.5l-3 2M5 18.5l3-2M19 18.5l-3-2M10 6.5L8.5 4M14 6.5L15.5 4" />
+    </>
+  ),
+  // a report: bars of revenue by month
+  chart: (
+    <>
+      <path d="M3.5 20.5h17" />
+      <path d="M6.5 20.5v-6M11 20.5V9M15.5 20.5v-8M20 20.5V5" />
     </>
   ),
   trace: (

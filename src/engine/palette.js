@@ -1,7 +1,8 @@
 // Colours shared by the 3D scene and the UI. Service colours follow the AWS architecture
 // icon categories (compute orange, storage green, database magenta, networking purple…),
 // except management: AWS paints it the same pink as integration, blue keeps the two apart —
-// and developer tools, teal here so they stand apart from both.
+// developer tools, teal here so they stand apart from both — and analytics: AWS paints it the
+// same purple as networking, gold here.
 export const CAT_COLOR = {
   foundation: '#64748b',
   compute: '#ED7100',
@@ -9,6 +10,7 @@ export const CAT_COLOR = {
   database: '#C925D1',
   network: '#8C4FFF',
   integration: '#E7157B',
+  analytics: '#CA9A0C',
   management: '#3B82F6',
   devtools: '#0D9488',
   security: '#DD344C',

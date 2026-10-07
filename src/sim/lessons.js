@@ -1,6 +1,15 @@
 // Turns a finished scenario into a lesson card: a verdict, what helped, what hurt and
 // one-click suggestions that patch the architecture so the user can try again.
-import { ASG, AZ_LABEL, BACKUP, BUDGET, LAMBDA, LEAK, OTHER_AZ, SQS } from './constants.js';
+import { ASG, AZ_LABEL, BACKUP, BUDGET, DR, LAMBDA, LEAK, OTHER_AZ, REGION, REPORT, SQS } from './constants.js';
+
+// the disaster recovery strategies, cheapest and slowest first, with their real-world RPO / RTO
+export const DR_STRATEGY = {
+  none: { name: 'Không có DR', rpo: '—', rto: 'chờ AWS khôi phục' },
+  backup: { name: 'Backup & restore', rpo: 'vài giờ', rto: 'vài giờ' },
+  pilot: { name: 'Pilot light', rpo: 'vài giây', rto: 'vài chục phút' },
+  warm: { name: 'Warm standby', rpo: 'vài giây', rto: 'vài phút' },
+  active: { name: 'Active-active', rpo: 'gần 0', rto: 'gần 0' },
+};
 
 export const ACTION_TITLE = {
   quake: 'Động đất phá huỷ một AZ',
@@ -14,6 +23,8 @@ export const ACTION_TITLE = {
   dataDelete: 'Xoá nhầm dữ liệu',
   leakedKey: 'Lộ access key',
   badDeploy: 'Deploy bản lỗi',
+  regionDown: 'Cả Region sập',
+  report: 'Báo cáo cuối tháng',
 };
 
 // what a private EC2 fleet without a NAT Gateway can no longer reach. Empty when nothing breaks:
@@ -399,6 +410,70 @@ export function evaluateLesson(sc) {
       break;
     }
 
+    case 'regionDown': {
+      const s = sc.strategy;
+      const city = DR.city;
+      const rds = cfg.database === 'rds';
+      if (s === 'none') {
+        bad(`Mọi thứ nằm trong một Region: ${REGION.city} sập là website sập theo. Multi-AZ không đỡ được vì mọi AZ đều thuộc Region đó — chỉ còn cách chờ AWS khôi phục, có thể nhiều giờ.`);
+        if (cfg.cloudfront) info('CloudFront vẫn trả các file tĩnh có sẵn trong cache ở điểm biên, nhưng mọi thao tác cần server đều lỗi.');
+        info('Cả Region sập rất hiếm nhưng đã từng xảy ra. Bốn chiến lược DR từ rẻ tới đắt — backup & restore, pilot light, warm standby, active-active — đổi tiền lấy RPO, RTO nhỏ hơn.');
+        suggest(`Thêm DR: warm standby ở ${city}`, { dr: 'warm', route53: true });
+      } else if (s === 'backup') {
+        good(`AWS Backup đã chép bản sao lưu sang ${city}: Region chính sập nhưng dữ liệu không mất theo.`);
+        bad('Backup & restore phải dựng lại toàn bộ hạ tầng từ CloudFormation rồi khôi phục dữ liệu: ngoài thực tế website sập nhiều giờ (RTO tính bằng giờ).');
+        bad('Dữ liệu chỉ về tới bản sao lưu gần nhất: các đơn hàng sau thời điểm đó mất (RPO tính bằng giờ).');
+        info('Bù lại đây là cách rẻ nhất: lúc bình thường chỉ trả tiền lưu bản sao. Hợp với hệ thống chịu được nghỉ nửa ngày.');
+        suggest('Nâng lên pilot light', { dr: 'pilot' });
+      } else if (s === 'pilot') {
+        good(`Dữ liệu được sao chép liên tục sang ${city}${rds ? ' (Aurora Global Database, trễ dưới 1 giây)' : cfg.database === 'dynamodb' ? ' (DynamoDB global tables)' : ''}: chỉ mất vài giây giao dịch cuối (RPO vài giây).`);
+        if (ec2) bad('Pilot light không tự nhận traffic: phải chờ người xác nhận thảm hoạ, bật máy chủ từ AMI, promote database rồi chuyển DNS — ngoài thực tế mất vài chục phút.');
+        else info(`Với serverless, API Gateway và Lambda ở ${city} đã triển khai sẵn mà gần như không tốn tiền khi rảnh — chỉ còn chờ người quyết định chuyển. Pilot light của serverless gần như là warm standby.`);
+        suggest('Nâng lên warm standby', { dr: 'warm' });
+      } else if (s === 'warm') {
+        good(`Route 53 thấy ${REGION.city} trượt health check và tự chuyển mọi người dùng sang ${city}: bản warm standby nhận traffic ngay${ec2 ? ', Auto Scaling thêm máy cho đủ tải' : ''}.`);
+        if (rds) info(`Bản sao database ở ${city} phải promote mới nhận ghi (Aurora Global: dưới 1 phút; RDS read replica: vài phút) — trong lúc đó các thao tác ghi lỗi.`);
+        info('Vẫn gián đoạn vài phút: health check cần 3 lần thất bại (30 giây một lần), người dùng còn nhớ địa chỉ cũ tới hết TTL của DNS. Mất vài giây dữ liệu chưa kịp sao chép (RPO vài giây).');
+      } else {
+        good(`${city} vốn đã phục vụ một nửa người dùng nên không sập lúc nào. Nửa còn lại chỉ lỗi trong lúc Route 53 xác nhận ${REGION.city} sập rồi bỏ nó khỏi câu trả lời DNS${ec2 ? '; Auto Scaling ở đó thêm máy cho phần tải dồn sang' : ''}.`);
+        if (rds) info(`RDS chỉ có một nơi ghi: bản ở ${city} phải promote mới nhận ghi (Aurora Global: dưới 1 phút). DynamoDB global tables thì ghi được ở mọi Region, không phải chờ.`);
+        else if (cfg.database === 'dynamodb') good('DynamoDB global tables cho ghi ở mọi Region: không có gì phải promote.');
+        info('Đắt nhất: trả tiền cho hai hệ thống đầy đủ, và phải thiết kế cho dữ liệu ghi ở hai nơi (DynamoDB global tables: bản ghi sau cùng thắng).');
+      }
+      if (s !== 'none' && s !== 'backup' && cfg.s3) good(`S3 Cross-Region Replication giữ bản sao file ở ${city}${cfg.cloudfront ? ' — CloudFront (origin group) tự lấy file từ đó ngay khi bucket gốc không trả lời' : ''}.`);
+      if (s !== 'none' && sc.drCost > 0) info(`Region dự phòng tốn khoảng ${money(sc.drCost)}/giờ lúc bình thường — đó là giá của mức RPO, RTO bạn chọn.`);
+      if (s === 'warm' || s === 'active') info('Muốn chuyển nhanh hơn DNS: AWS Global Accelerator cho hai IP anycast cố định, chuyển Region trong chưa tới 1 phút mà không phụ thuộc DNS cache.');
+      if (flags.has('drTooLate')) info('Bật DR khi Region đã sập là quá muộn: không còn dữ liệu nào để chép sang Region dự phòng.');
+      break;
+    }
+
+    case 'report': {
+      const w = sc.where;
+      if (w === 'prod') {
+        bad('Báo cáo chạy thẳng trên database đang bán hàng: câu SQL quét hàng trăm triệu dòng chiếm CPU và ổ đĩa, mọi truy vấn của website phải xếp hàng sau nó — nhiều đơn quá thời gian chờ và lỗi.');
+        bad('Database của website là OLTP, lưu theo dòng: chỉ cần cột tỉnh và cột số tiền vẫn phải đọc trọn từng dòng. Ngoài thực tế báo cáo kiểu này chạy hàng chục phút.');
+        if (cfg.rdsMultiAz) info('Multi-AZ không giúp được: standby chỉ chờ failover, không nhận truy vấn.');
+        if (cfg.cache) good('ElastiCache vẫn trả các lượt đọc có sẵn trong cache — nhưng đặt hàng, thanh toán phải ghi vào database nên vẫn chậm.');
+        info('Cách rẻ nhất để không làm chậm primary là chạy báo cáo trên một RDS read replica — nhưng replica vẫn lưu theo dòng nên báo cáo vẫn chậm.');
+        suggest('Xuất sang S3, báo cáo bằng Athena', { analytics: 'athena' });
+      } else if (w === 'scan') {
+        bad('DynamoDB không có GROUP BY hay JOIN: báo cáo phải Scan cả bảng rồi tự cộng trong code — chậm, và mỗi lần chạy tốn đơn vị đọc theo dung lượng cả bảng.');
+        good('Website gần như không bị ảnh hưởng: DynamoDB on-demand tự cấp thêm đơn vị đọc — bù lại bạn trả tiền cho cú Scan.');
+        info('DynamoDB hợp với truy cập theo khoá. Muốn phân tích thì đưa dữ liệu sang chỗ khác: export ra S3 rồi truy vấn bằng Athena (không tốn đơn vị đọc), hoặc zero-ETL sang Redshift.');
+        suggest('Export sang S3, báo cáo bằng Athena', { analytics: 'athena' });
+      } else if (w === 'athena') {
+        good('Báo cáo chạy bằng Athena trên file Parquet trong S3: database production không hề hay biết, website giữ nguyên tốc độ.');
+        good('Parquet chỉ đọc cột cần, thư mục chia theo tháng bỏ qua phần không lọc tới: Athena quét vài chục GB thay vì cả TB — mỗi lần chạy chỉ vài cent ($5/TB quét).');
+        info('Đổi lại, số liệu chỉ mới tới lần xuất đêm qua. Cần dashboard cập nhật từng phút cho nhiều người cùng xem thì dùng Redshift với zero-ETL.');
+      } else {
+        good('Zero-ETL chép mọi thay đổi từ database sang Redshift sau vài giây: báo cáo chạy ở kho dữ liệu, database production không phải gánh thêm.');
+        good('Redshift lưu theo cột và chia việc cho nhiều node chạy song song: báo cáo trên hàng trăm triệu dòng xong sau vài giây.');
+        info(`Zero-ETL không tính phí riêng, nhưng Redshift Serverless phải chạy để nhận thay đổi liên tục: khoảng ${money(REPORT.redshiftCostPerHour)}/giờ ở mức 4 RPU. Chỉ cần báo cáo cuối tháng thì S3 + Athena rẻ hơn nhiều.`);
+      }
+      info('Bước cuối: Quick Sight nối vào Athena hay Redshift để biến kết quả thành dashboard cho cả công ty.');
+      break;
+    }
+
     default:
       break;
   }
@@ -428,15 +503,33 @@ export function evaluateLesson(sc) {
   if (sc.action === 'leakedKey') grade = sc.hadGuardDuty ? 'pass' : sc.hadBudget ? 'partial' : 'fail';
   // a bad release: judged by how many users it reached
   if (sc.action === 'badDeploy') grade = sc.hadCanary ? 'pass' : 'fail';
+  // a report: judged by where it ran — on the production database it hurt customers the whole time
+  if (sc.action === 'report') grade = sc.where === 'prod' ? 'fail' : sc.where === 'scan' ? 'partial' : 'pass';
+  // a lost Region: did the site come back, and how soon
+  const drInfo = DR_STRATEGY[sc.strategy] || DR_STRATEGY.none;
+  // (pilot light and backup & restore wait for a person to decide: tens of minutes at best)
+  if (sc.action === 'regionDown') {
+    const back = sc.finalStatus === 'ok' || sc.finalStatus === 'slow';
+    const auto = sc.strategy === 'warm' || sc.strategy === 'active';
+    grade = !back ? 'fail' : auto && sc.badTime <= DR.passOutage ? 'pass' : 'partial';
+  }
 
   const headline = dataLost
     ? 'Dữ liệu đã mất vĩnh viễn!'
+    : sc.action === 'regionDown'
+      ? {
+          pass: sc.strategy === 'active' ? `${DR.city} vốn đã chạy — chỉ chờ DNS chuyển hướng!` : `${DR.city} gánh thay ${REGION.city} sau vài phút!`,
+          partial: `Chạy lại ở ${DR.city} — sau ${drInfo.rto}`,
+          fail: 'Website sập theo cả Region!',
+        }[grade]
     : sc.action === 'leakedKey'
       ? { pass: 'Chặn kịp trong vài phút!', partial: 'Phát hiện muộn — tiền đã mất', fail: 'Không ai phát hiện — hoá đơn khổng lồ!' }[grade]
       : sc.action === 'badDeploy'
       ? grade === 'pass'
         ? 'Bản lỗi bị chặn ở 10% traffic!'
         : 'Bản lỗi tới tay mọi người dùng!'
+      : sc.action === 'report'
+      ? { pass: 'Báo cáo xong, website không hề hay biết!', partial: 'Có báo cáo — nhưng chậm và tốn tiền', fail: 'Báo cáo làm khách thanh toán lỗi!' }[grade]
       : sc.action === 'night'
       ? grade === 'pass'
         ? 'Chi phí co giãn theo lượng truy cập'
@@ -446,7 +539,9 @@ export function evaluateLesson(sc) {
   const stats = [
     { label: 'Tỉ lệ request thành công thấp nhất', value: pct(sc.minSuccess) },
     { label: 'Thời gian bị lỗi/gián đoạn', value: `${Math.round(sc.badTime)} giây (mô phỏng)` },
-    { label: 'Độ trễ cao nhất', value: sc.maxLatency ? `${Math.round(sc.maxLatency)} ms` : '—' },
+    sc.action === 'regionDown'
+      ? { label: `${drInfo.name}: RPO · RTO ngoài thực tế`, value: `${drInfo.rpo} · ${drInfo.rto}` }
+      : { label: 'Độ trễ cao nhất', value: sc.maxLatency ? `${Math.round(sc.maxLatency)} ms` : '—' },
     {
       label: 'Chi phí ước tính',
       value: `${money(sc.costStart)} → ${money(sc.action === 'night' ? sc.costMin : sc.costMax)}/giờ`,
@@ -459,7 +554,13 @@ export function evaluateLesson(sc) {
       ? { pass: 'Chặn kịp', partial: 'Phát hiện muộn', fail: 'Không ai phát hiện' }[grade]
       : sc.action === 'night' && grade === 'partial'
         ? 'Lãng phí'
-        : null;
+        : sc.action === 'report' && grade === 'partial'
+          ? 'Chậm & tốn'
+        : sc.action === 'regionDown' && grade !== 'fail'
+          ? grade === 'pass' && sc.strategy === 'active'
+            ? 'Gián đoạn rất ngắn'
+            : `Gián đoạn ${drInfo.rto}`
+          : null;
 
   return { action: sc.action, az: sc.az || null, title: ACTION_TITLE[sc.action], grade, badge, headline, stats, points, suggestions };
 }
@@ -501,11 +602,13 @@ export function wellArchitected(c) {
   if (c.database === 'rds') add('rel', c.rdsMultiAz, 'RDS Multi-AZ: có standby ở AZ khác', { rdsMultiAz: true });
   if (c.database !== 'none' || ec2) add('rel', c.backup, 'Có bản sao lưu (AWS Backup) để khôi phục khi xoá nhầm', { backup: true });
   add('rel', c.queue, 'Đơn hàng không mất khi đối tác thanh toán sập (SQS)', { queue: true });
+  add('rel', c.dr !== 'none', 'Có phương án DR ở Region khác: cả Region sập vẫn chạy lại được', { dr: 'pilot', route53: true });
 
   add('perf', c.cloudfront, 'CloudFront cache nội dung gần người dùng', { cloudfront: true });
   add('perf', c.s3, 'File tĩnh phục vụ từ S3, không chiếm sức server', { s3: true });
   add('perf', elastic, 'Năng lực tự tăng theo lượng truy cập', { asg: true, elb: true });
   if (c.database === 'rds') add('perf', c.cache, 'ElastiCache đỡ lượt đọc cho RDS', { cache: true });
+  if (c.database !== 'none') add('perf', c.analytics !== 'none', 'Báo cáo chạy ngoài database production (Athena / Redshift)', { analytics: 'athena' });
 
   add('cost', elastic, 'Tự giảm máy khi vắng khách — không trả tiền cho máy ngồi chơi', { asg: true, elb: true });
   add('cost', c.budget > 0, 'Đặt ngân sách và cảnh báo (AWS Budgets)', { budget: BUDGET.options[1] });

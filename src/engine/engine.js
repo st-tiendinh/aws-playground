@@ -60,15 +60,25 @@ export function createEngine({ host, ui, simStore }) {
   function sandboxHome(duration = 1.2) {
     const aspect = freeAspect();
     const vfov = (camera.fov * Math.PI) / 180;
+    const view = sandbox.homeView();
     if (aspect < 0.85) {
       // portrait: look along the request path (users at the bottom, data tier at the top)
-      const dist = Math.max(60, (HOME_VIEW.radius / Math.sin(vfov / 2)) * 0.9);
-      rig.flyTo({ target: HOME_VIEW.portraitTarget, dir: HOME_VIEW.portraitDir, dist, duration });
+      const dist = Math.max(60, (view.radius / Math.sin(vfov / 2)) * 0.9);
+      rig.flyTo({ target: view.portraitTarget, dir: view.portraitDir, dist, duration });
       return;
     }
     const hfov = 2 * Math.atan(Math.tan(vfov / 2) * aspect);
-    const dist = Math.max(48, (HOME_VIEW.radius / Math.sin(Math.min(vfov, hfov) / 2)) * 0.8);
-    rig.flyTo({ target: HOME_VIEW.target, dir: HOME_VIEW.dir, dist, duration });
+    const dist = Math.max(48, (view.radius / Math.sin(Math.min(vfov, hfov) / 2)) * 0.8);
+    rig.flyTo({ target: view.target, dir: view.dir, dist, duration });
+  }
+  // a DR Region appearing or going away changes what the home view must take in
+  let drShown = false;
+  function reframe() {
+    const on = sim.config.dr !== 'none';
+    if (on !== drShown) {
+      drShown = on;
+      if (mode === 'sandbox') sandboxHome();
+    }
   }
   function updateDistScale() {
     rig.distScale = Math.min(1.9, Math.max(1, 1.35 / freeAspect()));
@@ -151,6 +161,7 @@ export function createEngine({ host, ui, simStore }) {
     ui.set({ mode: m, picked: null });
     if (m === 'sandbox') {
       world.setNight(sim.night);
+      drShown = sim.config.dr !== 'none';
       sandboxHome();
     } else {
       world.setNight(false);
@@ -201,6 +212,7 @@ export function createEngine({ host, ui, simStore }) {
       sandbox.rebuild();
       simStore.set({ presetId: id, lesson: null, lessonOpen: false, events: [] });
       pushSim(true);
+      reframe();
     },
     applyConfig(config) {
       pendingReplay = null;
@@ -208,11 +220,13 @@ export function createEngine({ host, ui, simStore }) {
       sandbox.rebuild();
       simStore.set({ presetId: null, lesson: null, lessonOpen: false, events: [] });
       pushSim(true);
+      reframe();
     },
     setConfig(patch) {
       sim.setConfig(patch);
       simStore.set({ presetId: null });
       pushSim();
+      reframe();
     },
     trigger(action, opts) {
       pendingReplay = null;
@@ -225,6 +239,7 @@ export function createEngine({ host, ui, simStore }) {
       simStore.set({ lesson: null, lessonOpen: false, presetId: patch ? null : simStore.get().presetId });
       pendingReplay = { action, opts, since: sim.t };
       pushSim();
+      reframe();
     },
     setUsers(n) {
       sim.setUsers(n);

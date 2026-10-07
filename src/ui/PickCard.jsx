@@ -1,6 +1,7 @@
 // Card for the 3D object the user clicked: what it is and, in the sandbox, its live state.
 import { CATEGORIES, LESSON_FOR, OBJECT_INFO, serviceById, serviceForModel } from '../data/services.js';
-import { AZ_CODE, AZ_LABEL } from '../sim/constants.js';
+import { AZ_CODE, AZ_LABEL, DR, REGION } from '../sim/constants.js';
+import { DR_STRATEGY } from '../sim/lessons.js';
 import { useApp, useSim, useUi } from '../state/store.js';
 import { fmtPct, fmtUsers, STATUS } from './format.js';
 import { Icon, ServiceIcon } from './icons.jsx';
@@ -9,10 +10,44 @@ const KIND_SERVICE = { asg: 'asg', vpc: 'vpc', igw: 'vpc', edge: 'cloudfront', a
 const STATE_TEXT = { running: 'Đang chạy', pending: 'Đang khởi động', failed: 'Hỏng', terminating: 'Đang tắt' };
 const DB_STATE = { ok: 'Hoạt động', creating: 'Đang tạo / khôi phục', promoting: 'Đang failover', failed: 'Hỏng' };
 
+// the copy of the stack kept in the DR Region
+function drRows(p, d) {
+  const rows = [];
+  if (p.key.startsWith('dr:ec2:')) {
+    const i = d.fleet.find((x) => 'dr:ec2:' + x.id === p.key);
+    if (!i) return null;
+    rows.push(['Instance ID', i.id], ['Vị trí', `Region dự phòng · ${DR.city}`], ['Trạng thái', STATE_TEXT[i.state] || i.state]);
+    if (i.state === 'running') rows.push(['CPU', fmtPct(i.cpu)]);
+  } else if (p.key === 'dr:rds') {
+    rows.push(['Vai trò', { replica: 'Bản sao (Aurora Global / read replica)', promoting: 'Đang promote thành primary', ready: d.strategy === 'backup' ? 'Primary khôi phục từ bản sao lưu' : 'Primary mới (đọc + ghi)' }[d.db] || '—']);
+    rows.push(['Đồng bộ', d.strategy === 'backup' ? 'tới bản sao lưu gần nhất' : 'liên tục, trễ dưới 1 giây']);
+  } else if (p.key === 'dr:dynamodb') {
+    rows.push(['Loại', d.strategy === 'backup' ? 'Bảng khôi phục từ bản sao lưu' : 'Global table: ghi được ở mọi Region'], ['Đồng bộ', 'thường dưới 1 giây']);
+  } else if (p.key === 'dr:s3') {
+    rows.push(['Nguồn', d.strategy === 'backup' ? 'khôi phục từ bản sao lưu' : `S3 Cross-Region Replication từ ${REGION.city}`]);
+  } else if (p.key === 'dr:vault') {
+    rows.push(['Chứa', `bản sao lưu chép từ ${REGION.city}`], ['Mất tối đa (RPO)', 'tới bản sao gần nhất — vài giờ']);
+  }
+  rows.push(['Chiến lược', DR_STRATEGY[d.strategy].name], ['Nhận người dùng', fmtPct(d.share)]);
+  return rows;
+}
+
 function live(p, snap, config) {
   if (!snap || p.mode !== 'sandbox') return null;
+  if (p.key?.startsWith('dr:')) return snap.dr ? drRows(p, snap.dr) : null;
   const rows = [];
-  if (p.key === 'worker') {
+  if (snap.region === 'down' && !['users', 'route53', 'cloudfront', 'external', 'budgets', 'guardduty', 'shield'].includes(p.key)) {
+    rows.push(['Region', `${REGION.code} mất kết nối`]);
+  }
+  if (p.key?.startsWith('analytics:')) {
+    // where reports run, and the report running now
+    const r = snap.report;
+    const where = { prod: 'RDS production', scan: 'Scan cả bảng DynamoDB', athena: 'Athena trên S3', redshift: 'Redshift' };
+    if (p.key === 'analytics:redshift') rows.push(['Nguồn dữ liệu', `zero-ETL từ ${config.database === 'rds' ? 'RDS' : 'DynamoDB'} · trễ vài giây`], ['Lưu trữ', 'theo cột, chia cho nhiều node'], ['Chi phí', '≈ $1,5/giờ (4 RPU, chạy liên tục để nhận thay đổi)']);
+    else if (p.key === 'analytics:athena') rows.push(['Đọc', 'file Parquet trong data lake'], ['Giá', '$5 mỗi TB quét · không truy vấn thì $0']);
+    else if (p.key === 'analytics:lake') rows.push(['Chứa', 'bản xuất database dạng Parquet, chia theo tháng'], ['Cập nhật', 'mỗi đêm — số liệu tới hôm qua']);
+    if (r) rows.push(['Báo cáo đang chạy', `${where[r.where]} · còn ${Math.ceil(r.remaining)} giây`]);
+  } else if (p.key === 'worker') {
     rows.push(['Đang xử lý', `${Math.round(snap.queue?.outRate || 0)} đơn/giây`], ['Đối tác thanh toán', snap.extDown ? 'đang sập — chờ thử lại' : 'hoạt động']);
   } else if (p.key === 'canary' || p.key === 'lambdaV2') {
     // the new release while it is being canary-tested

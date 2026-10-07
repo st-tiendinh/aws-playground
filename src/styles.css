@@ -362,6 +362,16 @@ p {
   grid-template-columns: repeat(4, 1fr);
 }
 
+.seg.five {
+  grid-template-columns: repeat(5, 1fr);
+}
+
+.seg.five button {
+  padding-inline: 2px;
+  white-space: nowrap;
+  font-size: 11.5px;
+}
+
 /* four options in a narrow panel: tighter padding, and a label never wraps — a long one
    ("Regional") widens its own column a little instead */
 .seg.four button {
@@ -1005,6 +1015,11 @@ p {
   gap: 8px;
 }
 
+/* an odd number of events: the last one (Phục hồi) takes the whole row */
+.action-grid > .action:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
 .action {
   --tone: #94a3b8;
   position: relative;
@@ -1276,6 +1291,7 @@ p {
 
 .status small {
   opacity: 0.75;
+  white-space: nowrap;
 }
 
 .stat {
@@ -1904,6 +1920,69 @@ p {
 .lbl--warn {
   border-color: #f59e0b;
   background: rgba(66, 32, 6, 0.85);
+}
+
+/* a results board in the explore view: the label grows into a small card with rows */
+.lbl--board {
+  align-items: flex-start;
+  border-radius: 12px;
+  padding: 7px 11px 8px 9px;
+}
+
+.lbl--board .lbl-dot {
+  margin-top: 4px;
+}
+
+.board-rows {
+  list-style: none;
+  display: grid;
+  gap: 2px;
+  min-width: 200px;
+  margin: 6px 0 0;
+  padding: 6px 0 0;
+  border-top: 1px solid rgba(148, 163, 184, 0.22);
+}
+
+.board-rows li {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 -5px;
+  padding: 2px 5px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.board-rows b {
+  color: #fde68a;
+  font-weight: 800;
+}
+
+.board-rows li.is-new {
+  animation: board-new 1.8s ease-out;
+}
+
+.board-rows li.is-hit {
+  animation: board-hit 1.5s ease-out;
+}
+
+@keyframes board-new {
+  0% {
+    background: rgba(251, 191, 36, 0.45);
+  }
+  100% {
+    background: transparent;
+  }
+}
+
+@keyframes board-hit {
+  0% {
+    background: rgba(74, 222, 128, 0.45);
+  }
+  100% {
+    background: transparent;
+  }
 }
 
 .callout {

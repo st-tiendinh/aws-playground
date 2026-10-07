@@ -649,10 +649,162 @@ test('a canary splits traffic by weight: it needs a load balancer in front of EC
   assert.equal(normalizeConfig({ compute: 'lambda', canary: true }).canary, true);
 });
 
+test('a whole Region going down: no DR = down until repaired; each strategy recovers faster and costs more', () => {
+  const run = (dr, preset = 'ha') => {
+    const s = sim(preset, { route53: true, dr, backup: dr === 'backup' || undefined });
+    s.run(3);
+    const cost = s.metrics.costBreakdown.dr;
+    const lt = runScenario(s, 'regionDown');
+    return { s, lt, cost };
+  };
+  const none = run('none');
+  assert.equal(none.lt.grade, 'fail');
+  assert.equal(none.s.metrics.status, 'down', 'Multi-AZ does not help when every AZ is gone');
+  assert.ok(none.lt.suggestions.some((x) => x.patch.dr === 'warm'));
+  const backup = run('backup');
+  const pilot = run('pilot');
+  const warm = run('warm');
+  const active = run('active');
+  assert.equal(backup.lt.grade, 'partial');
+  assert.equal(pilot.lt.grade, 'partial', 'pilot light waits for someone to decide');
+  assert.equal(warm.lt.grade, 'pass');
+  assert.equal(active.lt.grade, 'pass');
+  for (const r of [backup, pilot, warm, active]) {
+    assert.equal(r.s.dr.share, 1, 'every user is sent to the DR Region');
+    assert.equal(r.s.dr.phase, 'live');
+    assert.ok(['ok', 'slow'].includes(r.s.metrics.status));
+  }
+  // the outage shrinks and the standby bill grows, strategy by strategy
+  const bad = (r) => r.s.lesson.stats[1].value;
+  const secs = [backup, pilot, warm].map((r) => parseInt(bad(r), 10));
+  assert.ok(secs[0] > secs[1] && secs[1] > secs[2], `outage ${secs}`);
+  assert.ok(backup.cost < pilot.cost && pilot.cost < warm.cost && warm.cost < active.cost, `cost ${[backup, pilot, warm, active].map((r) => r.cost.toFixed(3))}`);
+  // active-active never drops every user: the DR Region was already serving half of them
+  assert.ok(active.lt.stats[0].value !== '0%' && active.s.events.every((e) => e.type !== 'siteDown'));
+  assert.ok(warm.s.events.some((e) => e.type === 'drPromoted'), 'the RDS replica is promoted');
+  assert.ok(backup.s.events.some((e) => e.type === 'drRebuilt'), 'backup & restore rebuilds the stack');
+});
+
+test('a Region outage: serverless pilot light is cheap; failback waits for the primary to be ready', () => {
+  const s = sim('serverless', { dr: 'pilot' });
+  s.run(3);
+  assert.ok(s.metrics.costBreakdown.dr < 0.05, 'idle Lambda and a global table cost almost nothing');
+  const lt = runScenario(s, 'regionDown');
+  assert.equal(lt.grade, 'partial');
+  const w = sim('ha', { dr: 'warm' });
+  w.run(3);
+  w.trigger('regionDown');
+  w.run(12);
+  assert.equal(w.trigger('quake', { az: 'a' }), false, 'nothing left to break in the lost Region');
+  w.trigger('repair');
+  let worst = 1;
+  for (let k = 0; k < 80; k++) {
+    w.run(0.1);
+    worst = Math.min(worst, w.metrics.success);
+  }
+  assert.ok(worst > 0.97, `users moved back before the primary was ready (success ${worst})`);
+  assert.equal(w.dr.share, 0);
+  assert.equal(w.dr.phase, 'standby');
+  assert.equal(w.dr.db, 'replica');
+  assert.ok(w.settled());
+});
+
+test('DR needs Route 53 to move users, and backups for backup & restore; setting it up mid-outage is too late', () => {
+  assert.equal(normalizeConfig({ dr: 'warm' }).dr, 'none');
+  assert.equal(normalizeConfig({ route53: true, dr: 'warm' }).dr, 'warm');
+  assert.equal(normalizeConfig({ route53: true, database: 'rds', dr: 'backup' }).dr, 'none');
+  assert.equal(normalizeConfig({ route53: true, database: 'rds', backup: true, dr: 'backup' }).dr, 'backup');
+  const s = sim('ha');
+  s.run(2);
+  s.trigger('regionDown');
+  s.run(2);
+  s.setConfig({ dr: 'warm' });
+  s.run(10);
+  assert.ok(s.events.some((e) => e.type === 'drTooLate'));
+  assert.equal(s.dr.share, 0);
+  assert.equal(s.metrics.status, 'down');
+});
+
+test('active-active splits the users and both Regions scale for a spike', () => {
+  const s = sim('ha', { dr: 'active' });
+  s.run(3);
+  assert.equal(s.flows.drShare, 0.5);
+  s.trigger('spike');
+  s.run(20);
+  const r1 = s.instances.filter((i) => i.state !== 'terminating').length;
+  const r2 = s.dr.fleet.filter((i) => i.state !== 'terminating').length;
+  assert.ok(r1 > 2 && r2 > 2, `fleets ${r1} / ${r2}`);
+  assert.ok(Math.abs(r1 - r2) <= 1);
+});
+
+test('a month-end report on the production RDS makes orders time out; the Multi-AZ standby cannot share it', () => {
+  const s = sim('ha');
+  s.run(3);
+  assert.ok(s.trigger('report') !== false);
+  s.run(4);
+  assert.ok(s.flows.reportHit);
+  assert.ok(s.metrics.success < 0.97, `success ${s.metrics.success}`);
+  assert.ok(s.db.find((n) => n.role === 'primary').load >= 1);
+  assert.ok(s.events.some((e) => e.type === 'reportStandby'));
+  for (let k = 0; k < 600 && !s.lesson; k++) s.run(0.1);
+  const l = s.lesson;
+  assert.equal(l.grade, 'fail');
+  assert.ok(l.suggestions.some((x) => x.patch.analytics === 'athena'));
+  assert.equal(s.metrics.status, 'ok', 'the site recovers once the report is done');
+});
+
+test('a report on S3 + Athena or on Redshift (zero-ETL) leaves the website alone; Redshift costs more to keep', () => {
+  const cost = {};
+  for (const analytics of ['athena', 'redshift']) {
+    const s = sim('ha', { analytics });
+    s.run(3);
+    cost[analytics] = s.metrics.costBreakdown.analytics;
+    assert.ok(s.trigger('report') !== false);
+    let worst = 1;
+    for (let k = 0; k < 600 && !s.lesson; k++) {
+      s.run(0.1);
+      worst = Math.min(worst, s.metrics.success);
+    }
+    assert.ok(worst > 0.99, `${analytics}: success ${worst}`);
+    assert.equal(s.lesson.grade, 'pass');
+    assert.ok(s.t < 20, `${analytics}: the lesson should come as soon as the quick report is done (t ${s.t})`);
+  }
+  assert.ok(cost.redshift > cost.athena + 1, JSON.stringify(cost));
+});
+
+test('DynamoDB has no GROUP BY: the report turns into a full Scan — the site is fine, the bill and the wait are not', () => {
+  const s = sim('serverless');
+  s.run(3);
+  const before = s.metrics.cost;
+  assert.ok(s.trigger('report') !== false);
+  s.run(2);
+  assert.ok(s.metrics.cost > before + 3, `${before} → ${s.metrics.cost}`);
+  let worst = 1;
+  for (let k = 0; k < 600 && !s.lesson; k++) {
+    s.run(0.1);
+    worst = Math.min(worst, s.metrics.success);
+  }
+  assert.ok(worst > 0.99);
+  assert.equal(s.lesson.grade, 'partial');
+  assert.equal(s.lesson.badge, 'Chậm & tốn');
+});
+
+test('reports need data: no database, no analytics and no report', () => {
+  assert.equal(normalizeConfig({ analytics: 'redshift' }).analytics, 'none');
+  assert.equal(normalizeConfig({ database: 'rds', analytics: 'redshift' }).analytics, 'redshift');
+  assert.equal(normalizeConfig({ database: 'dynamodb', analytics: 'nope' }).analytics, 'none');
+  const s = sim('single');
+  s.run(1);
+  assert.equal(s.trigger('report'), false);
+  const r = sim('classic', { analytics: 'athena' });
+  r.setConfig({ database: 'none' });
+  assert.equal(r.config.analytics, 'none');
+});
+
 test('Well-Architected score rises as weak spots are fixed', () => {
   const avg = (c) => wellArchitected(normalizeConfig(c)).reduce((n, p) => n + p.score, 0) / 6;
   const weak = avg({});
-  const strong = avg({ route53: true, cloudfront: true, s3: true, elb: true, asg: true, appSubnet: 'private', nat: 'perAz', vpce: true, database: 'rds', rdsMultiAz: true, cache: true, waf: true, shield: true, guardduty: true, budget: 1000, queue: true, backup: true, canary: true });
+  const strong = avg({ route53: true, cloudfront: true, s3: true, elb: true, asg: true, appSubnet: 'private', nat: 'perAz', vpce: true, database: 'rds', rdsMultiAz: true, cache: true, waf: true, shield: true, guardduty: true, budget: 1000, queue: true, backup: true, canary: true, dr: 'warm', analytics: 'athena' });
   assert.ok(strong > weak + 40, `${weak} → ${strong}`);
   for (const p of wellArchitected(normalizeConfig({}))) for (const x of p.checks) if (x.patch) assert.ok(typeof x.patch === 'object');
 });

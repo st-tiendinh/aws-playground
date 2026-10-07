@@ -3,7 +3,7 @@
 // request packets along the routes the simulation reports and turns simulation events
 // (earthquake, failures, scaling, failover…) into effects and sounds.
 import * as THREE from 'three';
-import { AZ_CODE, AZ_IDS, AZ_LABEL, LAMBDA, SQS } from '../sim/constants.js';
+import { AZ_CODE, AZ_IDS, AZ_LABEL, DR, LAMBDA, REGION, SQS } from '../sim/constants.js';
 import { Fx, arc } from './fx.js';
 import { createModel } from './models/index.js';
 import { CAT_COLOR, COLOR } from './palette.js';
@@ -44,19 +44,27 @@ export const LAYOUT = {
   // the load balancer, or the new Lambda version beside the old one
   canary: [2.5, 0, -3.5],
   lambdaV2: [8.5, 0, -7],
+  // where reports run, behind the data tier just outside the Region's back edge (clear of the DR
+  // Region further back): the lake + Athena, or Redshift — and the sales team, far enough left that
+  // the two labels never meet, while a report runs
+  analytics: { bi: [3, 0, -19.5], lake: [13.5, 0, -19.5], athena: [19, 0, -19.5], redshift: [18, 0, -19.5], focus: [11, 0.5, -19.5] },
   // subnet tiles inside each AZ strip: [public (NAT) | app servers | data]
   tiles: { pub: { x: 1.8, w: 3.0 }, app: { x: 9.05, w: 10.9 }, data: { x: 17.7, w: 5.6 } },
   asg: { x: 9.05, z: 0, w: 11.4, d: 26.4 },
+  // the DR Region (Tokyo), a smaller platform behind the primary one, clear of the outside APIs on the
+  // left: backup copies and the replica bucket, the entry (load balancer or API Gateway), up to 10
+  // servers or Lambda, the database copy
+  dr: { x: 14, z: -27.5, w: 34, d: 11, vault: [0.5, 0, -30], s3: [0.5, 0, -25], entry: [7, 0, -27.5], lambda: [15.3, 0, -27.5], db: [26.5, 0, -27.5] },
 };
 
 // GuardDuty and the miners sit at the far left of the home view: their callouts lean right so the
 // text does not slip under the left panel
 const LEAK_TEXT_DX = 2.5;
 
-// everything the sandbox can show, users island to data tier plus the packets arcing above:
-// the drifting sky clouds stay out of the way of this box
+// everything the sandbox can show, users island to data tier — and the DR Region behind — plus the
+// packets arcing above: the drifting sky clouds stay out of the way of this box
 const BOUNDS = new THREE.Box3(
-  new THREE.Vector3(LAYOUT.users[0] - 6.5, -0.5, LAYOUT.external[2] - 2.5),
+  new THREE.Vector3(LAYOUT.users[0] - 6.5, -0.5, LAYOUT.dr.z - LAYOUT.dr.d / 2 - 1),
   new THREE.Vector3(LAYOUT.region.x + LAYOUT.region.w / 2 + 0.5, 8, LAYOUT.region.z + LAYOUT.region.d / 2 + 0.5),
 );
 
@@ -66,6 +74,31 @@ export const HOME_VIEW = {
   radius: 37,
   portraitTarget: new THREE.Vector3(-6, 0, 0),
   portraitDir: new THREE.Vector3(-0.72, 0.68, 0.16).normalize(),
+};
+
+// with a DR Region the view pulls back to take in both Regions
+const HOME_VIEW_DR = {
+  ...HOME_VIEW,
+  target: new THREE.Vector3(-5, 0, -8),
+  dir: new THREE.Vector3(-0.2, 0.78, 0.6).normalize(),
+  radius: 40,
+  portraitTarget: new THREE.Vector3(-3, 0, -9),
+};
+
+// a DR server's place: two rows of five in the middle of the DR Region
+export function drSlot(slot, out = new THREE.Vector3()) {
+  const D = LAYOUT.dr;
+  return out.set(10.5 + (slot % 5) * 2.4, 0, D.z + (slot < 5 ? -1.8 : 1.8));
+}
+
+// models of the primary Region that go dark with it (the global ones — Route 53, CloudFront — stay)
+const REGIONAL = ['elb', 'apigw', 'lambda', 'dynamodb', 's3', 'cache', 'sqs', 'worker', 'vpce', 'waf', 'canary', 'lambdaV2', 'asg', 'analytics:lake', 'analytics:athena', 'analytics:redshift'];
+
+const DR_STANDBY = {
+  backup: 'Backup & restore · chỉ giữ bản sao lưu',
+  pilot: 'Pilot light · dữ liệu đồng bộ, máy tắt',
+  warm: 'Warm standby · bản thu nhỏ chạy sẵn',
+  active: 'Active-active · phục vụ 50% người dùng',
 };
 
 export function ec2Slot(az, slot, out = new THREE.Vector3()) {
@@ -94,6 +127,17 @@ const TITLES = {
   vpce: ['VPC Endpoint', 'S3 · SQS'],
   backup: ['AWS Backup', 'sao lưu + PITR'],
   guardduty: ['Amazon GuardDuty', 'đọc CloudTrail · Flow Logs · DNS'],
+  // (the lake bucket has no label of its own: Athena's speaks for both)
+  'analytics:athena': ['S3 + Athena', 'data lake · $5/TB quét'],
+  'analytics:redshift': ['Redshift Serverless', 'zero-ETL · trễ vài giây'],
+  'analytics:bi': ['Đội kinh doanh', 'báo cáo cuối tháng'],
+  'dr:vault': ['AWS Backup · Tokyo', 'bản sao lưu chép sang'],
+  'dr:s3': ['S3 · bản sao', 'Cross-Region Replication'],
+  'dr:elb': ['Load Balancer', 'Tokyo'],
+  'dr:apigw': ['API Gateway', 'Tokyo'],
+  'dr:lambda': ['Lambda', 'Tokyo'],
+  'dr:rds': ['Database · bản sao', ''],
+  'dr:dynamodb': ['DynamoDB', 'global table'],
 };
 
 const pickWeighted = (list) => {
@@ -261,6 +305,18 @@ export class SandboxScene {
         return m;
       });
     }
+    // where reports run: the lake + Athena or Redshift, and the sales team while a report runs
+    const A = L.analytics;
+    this._ensure('analytics:lake', c.analytics === 'athena', () => createModel('s3', { id: 'analytics:lake', position: A.lake, scale: 0.85 }));
+    this._ensure('analytics:athena', c.analytics === 'athena', () => createModel('athena', { id: 'analytics:athena', position: A.athena, size: 1.2 }));
+    this._ensure('analytics:redshift', c.analytics === 'redshift', () => createModel('redshift', { id: 'analytics:redshift', position: A.redshift, scale: 0.8, count: 2 }));
+    this._ensure('analytics:bi', sim.report.active, () => createModel('user', { id: 'analytics:bi', position: A.bi, shirt: '#fbbf24' }));
+    const rsm = this.node('analytics:redshift');
+    if (rsm) {
+      const busy = sim.report.active && sim.report.where === 'redshift';
+      rsm.setCount(busy ? 6 : 2);
+      rsm.setLoad(busy ? 1 : 0.25);
+    }
     const dep = sim.deploy;
     this._ensure('canary', dep.active && dep.canary && ec2, () => {
       const m = createModel('ec2', { id: 'canary', position: L.canary, scale: 1.1 });
@@ -274,7 +330,7 @@ export class SandboxScene {
     });
     // SQS backlog (log scale: 1 → 1 message, 10 → 4, 100 → 8, 1000+ → 12), vault, outside APIs
     this.node('sqs')?.setQueue(Math.min(12, Math.ceil(Math.log10(sim.queue.depth + 1) * 4)));
-    this.node('backup')?.setState(sim.data.restoring ? 'restoring' : 'ok');
+    this.node('backup')?.setState(sim.regionDown ? 'off' : sim.data.restoring ? 'restoring' : 'ok');
     this.node('external').setState(sim.extDown ? 'off' : 'ok');
     this._ensure('asg', ec2 && c.asg, () => {
       const m = createModel('outline', { id: 'asg', kind: 'asg', category: 'compute', w: L.asg.w, d: L.asg.d, r: 1.2, color: CAT_COLOR.compute, fill: 0.07, speed: 0.6, thick: 0.16, position: [L.asg.x, AZ_Y + 0.02, L.asg.z] });
@@ -292,14 +348,15 @@ export class SandboxScene {
       this.node('appPub-' + az).group.visible = ec2 && !priv;
       this.node('appPriv-' + az).group.visible = priv;
       this.node('data-' + az).group.visible = c.database === 'rds';
-      // smoke keeps rising from a destroyed AZ until it is repaired
-      const down = sim.az[az] === 'destroyed';
+      // smoke keeps rising from an AZ an earthquake destroyed until it is repaired; a Region that
+      // is cut off just goes dark
+      const down = sim.az[az] === 'destroyed' && !sim.regionDown;
       const zc = L.az[az];
       for (let k = 0; k < 3; k++) {
         this.fx.setEmitter(`quake:${az}:${k}`, down ? { kind: 'smoke', rate: 1.6, pos: new THREE.Vector3(zc.x - 6 + k * 7, AZ_Y + 0.2, zc.z + (k - 1) * 1.6), color: '#57534e', size: 2.2, alpha: 0.45 } : null);
       }
       const zone = this.node('az-' + az);
-      zone.setState(sim.az[az] === 'destroyed' ? 'failed' : 'ok');
+      zone.setState(sim.regionDown ? 'off' : sim.az[az] === 'destroyed' ? 'failed' : 'ok');
       zone.night = this.world.night > 0.5;
       zone.setLabelSub(sim.az[az] === 'destroyed' ? 'MẤT KẾT NỐI' : AZ_CODE[az]);
       zone.setLabelState(sim.az[az] === 'destroyed' ? 'bad' : null);
@@ -323,12 +380,14 @@ export class SandboxScene {
         this._add(key, m, { beam: i.state === 'pending' });
         if (i.state === 'pending') this.sfx?.play('build');
       }
-      m.setState(i.state === 'running' ? 'ok' : i.state);
+      // cut off with its Region: dark rather than burning
+      const cut = i.state === 'failed' && i.cause === 'region';
+      m.setState(cut ? 'off' : i.state === 'running' ? 'ok' : i.state);
       m.setLoad(i.state === 'running' ? i.cpu : 0);
       const failed = i.state === 'failed';
       const buggy = dep.active && !dep.canary && dep.share > 0.5;
       m.setLabelState(failed || buggy ? 'bad' : i.cpu > 1 ? 'warn' : null);
-      this.fx.setEmitter('smoke:' + key, failed ? { kind: 'smoke', rate: 2.2, pos: m.anchor(new THREE.Vector3(), 0.4), size: 1.3 } : null);
+      this.fx.setEmitter('smoke:' + key, failed && !cut ? { kind: 'smoke', rate: 2.2, pos: m.anchor(new THREE.Vector3(), 0.4), size: 1.3 } : null);
       this.fx.setEmitter('heat:' + key, !failed && i.cpu > 1 ? { kind: 'heat', rate: 3, pos: m.anchor(new THREE.Vector3(), 0.9) } : null);
     }
     for (const key of [...this.nodes.keys()]) if (key.startsWith('ec2:') && !seen.has(key)) this._remove(key);
@@ -345,10 +404,10 @@ export class SandboxScene {
         m.dbId = n.id;
         this._add(key, m);
       }
-      m.setState(n.state === 'ok' || n.state === 'creating' ? 'ok' : n.state);
+      m.setState(n.cause === 'region' ? 'off' : n.state === 'ok' || n.state === 'creating' ? 'ok' : n.state);
       m.setGhost(n.role === 'standby' || n.state === 'creating');
       m.load = n.load;
-      this.fx.setEmitter('smoke:' + key, n.state === 'failed' ? { kind: 'smoke', rate: 2, pos: m.anchor(new THREE.Vector3(), 0.5) } : null);
+      this.fx.setEmitter('smoke:' + key, n.state === 'failed' && n.cause !== 'region' ? { kind: 'smoke', rate: 2, pos: m.anchor(new THREE.Vector3(), 0.5) } : null);
     }
     for (const key of [...this.nodes.keys()]) if (key.startsWith('rds:') && !dbSeen.has(key)) this._remove(key);
 
@@ -366,14 +425,74 @@ export class SandboxScene {
         m.natId = n.id;
         this._add(key, m);
       }
-      m.setState(n.state === 'failed' ? 'failed' : 'ok');
+      m.setState(n.state === 'failed' ? (sim.regionDown ? 'off' : 'failed') : 'ok');
       m.setGhost(n.state === 'expanding');
-      this.fx.setEmitter('smoke:' + key, n.state === 'failed' ? { kind: 'smoke', rate: 1.8, pos: m.anchor(new THREE.Vector3(), 0.6) } : null);
+      this.fx.setEmitter('smoke:' + key, n.state === 'failed' && !sim.regionDown ? { kind: 'smoke', rate: 1.8, pos: m.anchor(new THREE.Vector3(), 0.6) } : null);
     }
     for (const key of [...this.nodes.keys()]) if (key.startsWith('nat:') && !natSeen.has(key)) this._remove(key);
 
+    // the primary Region going dark as a whole: its platform and every regional service on it
+    this.node('region').setState(sim.regionDown ? 'off' : 'ok');
+    for (const k of REGIONAL) this.node(k)?.setState(sim.regionDown ? 'off' : 'ok');
+    this._syncDr();
+
     // day / night
     this.world.setNight(sim.night);
+  }
+
+  // the DR Region: its platform and whatever the strategy keeps running there
+  _syncDr() {
+    const sim = this.sim;
+    const c = sim.config;
+    const d = sim.dr;
+    const L = LAYOUT.dr;
+    const on = c.dr !== 'none';
+    const ec2 = c.compute === 'ec2';
+    if (on && !this.node('dr:region')) {
+      const region = createModel('region', { id: 'dr:region', w: L.w, d: L.d, position: [L.x, 0, L.z] });
+      region.setLabel(`Region dự phòng · ${DR.code}`, DR.city, { zone: true, y: 0.4 });
+      region.label.position.set(-L.w / 2 + 6.5, 0.4, L.d / 2 - 0.3);
+      this._add('dr:region', region, { beam: false });
+      this.fx.ring(new THREE.Vector3(L.x, 0, L.z), { color: '#7dd3fc', r0: 2, r1: 16, dur: 1.4 });
+    } else if (!on && this.node('dr:region')) this._remove('dr:region');
+    this._ensure('dr:vault', on && d.vault, () => createModel('backup', { id: 'dr:vault', position: L.vault }));
+    this._ensure('dr:s3', on && d.s3 === 'ready', () => createModel('s3', { id: 'dr:s3', position: L.s3 }));
+    this._ensure('dr:elb', on && ec2 && d.elb, () => createModel('elb', { id: 'dr:elb', position: L.entry }));
+    this._ensure('dr:apigw', on && !ec2 && d.lambda, () => createModel('apigw', { id: 'dr:apigw', position: L.entry }));
+    this._ensure('dr:lambda', on && !ec2 && d.lambda, () => createModel('lambda', { id: 'dr:lambda', position: L.lambda }));
+    this._ensure('dr:rds', on && c.database === 'rds' && d.db !== 'none', () => createModel('rds', { id: 'dr:rds', position: L.db }));
+    this._ensure('dr:dynamodb', on && c.database === 'dynamodb' && d.db !== 'none', () => createModel('dynamodb', { id: 'dr:dynamodb', position: L.db }));
+    const seen = new Set();
+    for (const i of on ? d.fleet : []) {
+      const key = 'dr:ec2:' + i.id;
+      let m = this.nodes.get(key);
+      if (i.state === 'terminating') {
+        if (m) this._remove(key);
+        continue;
+      }
+      seen.add(key);
+      if (!m) {
+        m = createModel('ec2', { id: key, scale: 1.1 });
+        drSlot(i.slot, m.group.position);
+        m.setLabel(`EC2 T${i.n}`, '', { small: true });
+        m.drInstId = i.id;
+        this._add(key, m, { beam: i.state === 'pending' });
+        if (i.state === 'pending') this.sfx?.play('build');
+      }
+      const cpu = i.state === 'running' ? sim.flows.dr?.cpu || 0 : 0;
+      m.setState(i.state === 'running' ? 'ok' : i.state);
+      m.setLoad(cpu);
+      this.fx.setEmitter('heat:' + key, cpu > 1 ? { kind: 'heat', rate: 3, pos: m.anchor(new THREE.Vector3(), 0.9) } : null);
+    }
+    for (const key of [...this.nodes.keys()]) if (key.startsWith('dr:ec2:') && !seen.has(key)) this._remove(key);
+    // a replica waiting on passive standby looks see-through until it takes users
+    const rds = this.node('dr:rds');
+    if (rds) {
+      rds.setState(d.db === 'promoting' ? 'promoting' : 'ok');
+      rds.setGhost(d.db === 'replica' && d.share === 0);
+    }
+    this.node('dr:dynamodb')?.setGhost(d.share === 0);
+    this.node('dr:vault')?.setState(d.phase === 'rebuilding' ? 'restoring' : 'ok');
   }
 
   // labels change a few times per second only
@@ -428,13 +547,30 @@ export class SandboxScene {
     }
     const vault = this.node('backup');
     if (vault) {
-      vault.setLabelSub(sim.data.restoring ? `đang khôi phục… ${Math.ceil(sim.data.timer)} giây` : 'hằng ngày + liên tục (PITR)');
-      vault.setLabelState(sim.data.restoring ? 'warn' : null);
+      vault.setLabelSub(sim.regionDown ? 'MẤT KẾT NỐI' : sim.data.restoring ? `đang khôi phục… ${Math.ceil(sim.data.timer)} giây` : 'hằng ngày + liên tục (PITR)');
+      vault.setLabelState(sim.regionDown ? 'bad' : sim.data.restoring ? 'warn' : null);
     }
     const ddb = this.node('dynamodb');
     if (ddb) {
-      ddb.setLabelSub(sim.data.wiped ? 'DỮ LIỆU BỊ XOÁ' : 'NoSQL');
-      ddb.setLabelState(sim.data.wiped ? 'bad' : null);
+      const scan = sim.report.active && sim.report.where === 'scan';
+      ddb.setLabelSub(sim.data.wiped ? 'DỮ LIỆU BỊ XOÁ' : scan ? 'đang bị Scan cả bảng' : 'NoSQL');
+      ddb.setLabelState(sim.data.wiped ? 'bad' : scan ? 'warn' : null);
+    }
+    const rep = sim.report;
+    const reportAt = (w) => rep.active && rep.where === w;
+    this.node('analytics:redshift')?.setLabelSub(reportAt('redshift') ? 'đang chạy báo cáo…' : 'zero-ETL · trễ vài giây');
+    this.node('analytics:athena')?.setLabelSub(reportAt('athena') ? 'đang quét Parquet trong S3…' : 'data lake · $5/TB quét');
+    const bi = this.node('analytics:bi');
+    if (bi && rep.active) {
+      bi.setLabelSub({ prod: 'báo cáo chạy trên RDS production…', scan: 'Scan cả bảng DynamoDB…', athena: 'báo cáo bằng Athena', redshift: 'báo cáo trên Redshift' }[rep.where]);
+      bi.setLabelState(rep.where === 'prod' || rep.where === 'scan' ? 'warn' : null);
+    }
+    // with a DR Region standing behind, the strip between the two Regions is crowded: the analytics
+    // labels then show on hover only
+    const quiet = sim.config.dr !== 'none';
+    for (const k of ['analytics:redshift', 'analytics:athena', 'analytics:bi']) {
+      const am = this.node(k);
+      if (am && !am.removing) am.setLabelVisible(this.labelsOn && (!quiet || am.highlighted || am.selected));
     }
     const elb = this.node('elb');
     if (elb) {
@@ -466,16 +602,19 @@ export class SandboxScene {
         md.setLabel(title, '');
       }
       const wiped = sim.data.wiped && n.state === 'ok';
+      const hogged = sim.flows.reportHit && n.role === 'primary' && n.state === 'ok';
       const sub = wiped
         ? 'DỮ LIỆU BỊ XOÁ'
-        : {
+        : hogged
+          ? 'báo cáo chiếm hết tải'
+          : {
             ok: n.role === 'primary' ? `${Math.round(n.load * 100)}% tải` : 'đồng bộ dữ liệu',
             creating: n.role === 'primary' ? 'đang khôi phục…' : 'đang tạo…',
             promoting: 'đang failover…',
-            failed: 'HỎNG',
+            failed: n.cause === 'region' ? 'MẤT KẾT NỐI' : 'HỎNG',
           }[n.state];
       md.setLabelSub(sub);
-      md.setLabelState(n.state === 'failed' || wiped ? 'bad' : n.state === 'promoting' ? 'warn' : null);
+      md.setLabelState(n.state === 'failed' || wiped ? 'bad' : n.state === 'promoting' || hogged ? 'warn' : null);
     }
     // with a big fleet the CPU gauges speak for themselves; keep the labels short
     const busy = sim.instances.length > 4;
@@ -491,7 +630,7 @@ export class SandboxScene {
       // while expanding, this AZ's traffic goes through the presence in another AZ (if ready)
       const via = n.state === 'expanding' && sim.nat.find((x) => x !== n && x.state === 'ok');
       let sub;
-      if (n.state === 'failed') sub = 'HỎNG';
+      if (n.state === 'failed') sub = sim.regionDown ? 'MẤT KẾT NỐI' : 'HỎNG';
       else if (n.state === 'expanding') sub = via ? `đang mở rộng… · tạm đi qua ${AZ_LABEL[via.az]}` : 'đang mở rộng…';
       else if (n.regional) sub = `phần ở ${AZ_LABEL[n.az]}`;
       else sub = sim.config.nat === 'single' ? 'dùng chung cho cả 2 AZ' : `riêng cho ${AZ_LABEL[n.az]}`;
@@ -510,8 +649,72 @@ export class SandboxScene {
     for (const i of sim.instances) {
       const md = this.node('ec2:' + i.id);
       if (!md) continue;
-      md.setLabelSub(i.state === 'failed' ? 'HỎNG' : i.state === 'pending' ? 'khởi động…' : v2 ? deploySub(sim.deploy) : `CPU ${Math.round(i.cpu * 100)}%`);
-      if (!md.removing) md.setLabelVisible(this.labelsOn && (!busy || i.state === 'failed'));
+      md.setLabelSub(i.state === 'failed' ? (i.cause === 'region' ? 'MẤT KẾT NỐI' : 'HỎNG') : i.state === 'pending' ? 'khởi động…' : v2 ? deploySub(sim.deploy) : `CPU ${Math.round(i.cpu * 100)}%`);
+      if (!md.removing) md.setLabelVisible(this.labelsOn && (!busy || (i.state === 'failed' && i.cause !== 'region')));
+    }
+    const region = this.node('region');
+    region.setLabelSub(sim.regionDown ? `${REGION.city} · MẤT KẾT NỐI` : REGION.city);
+    region.setLabelState(sim.regionDown ? 'bad' : null);
+    this._labelsDr();
+  }
+
+  _labelsDr() {
+    const sim = this.sim;
+    const c = sim.config;
+    const d = sim.dr;
+    const r = sim.flows.dr;
+    const region = this.node('dr:region');
+    if (!region) return;
+    const phase = {
+      standby: DR_STANDBY[c.dr],
+      detecting: 'Route 53 đang xác nhận sự cố…',
+      deciding: 'chờ người trực quyết định chuyển…',
+      rebuilding: `đang dựng lại từ CloudFormation… ${Math.ceil(d.timer)} giây`,
+      recovering: 'đang nhận người dùng chuyển sang…',
+      live: 'ĐANG GÁNH TOÀN BỘ NGƯỜI DÙNG',
+      failback: `đang trả người dùng về ${REGION.city}…`,
+    }[d.phase];
+    region.setLabelSub(`${DR.city} · ${phase || ''}`);
+    region.setLabelState(['detecting', 'deciding', 'rebuilding', 'recovering'].includes(d.phase) ? 'warn' : null);
+    const rds = this.node('dr:rds');
+    if (rds) {
+      const title = d.db === 'ready' ? 'Database · primary mới' : 'Database · bản sao';
+      if (rds._title !== title) {
+        rds._title = title;
+        rds.setLabel(title, '');
+      }
+      const sub = {
+        replica: d.share > 0 ? 'nhận đọc · ghi chuyển về primary' : 'bản sao · trễ dưới 1 giây',
+        promoting: `đang promote… ${Math.ceil(d.promoteTimer)} giây`,
+        ready: c.dr === 'backup' ? 'khôi phục từ bản sao lưu' : 'nhận cả đọc lẫn ghi',
+      }[d.db];
+      rds.setLabelSub(sub || '');
+      rds.setLabelState(d.db === 'promoting' ? 'warn' : null);
+    }
+    this.node('dr:dynamodb')?.setLabelSub(c.dr === 'backup' ? 'khôi phục từ bản sao lưu' : c.dr === 'active' ? 'global table · ghi ở cả 2 Region' : 'global table · bản sao đồng bộ');
+    this.node('dr:s3')?.setLabelSub(c.dr === 'backup' ? 'khôi phục từ bản sao lưu' : 'Cross-Region Replication');
+    this.node('dr:vault')?.setLabelSub(d.phase === 'rebuilding' ? 'đang khôi phục…' : `bản sao lưu từ ${REGION.city}`);
+    const elb = this.node('dr:elb');
+    if (elb) {
+      const n = d.fleet.filter((i) => i.state === 'running').length;
+      elb.setLabelSub(d.share === 0 ? 'chờ sẵn · chưa nhận traffic' : `${n} máy khoẻ đang nhận traffic`);
+      elb.activity = Math.min(1, (r?.appRps || 0) / 2000);
+    }
+    const lam = this.node('dr:lambda');
+    if (lam) {
+      const conc = (r?.appServed || 0) * LAMBDA.duration;
+      lam.setLabelSub(d.share === 0 ? 'đã triển khai · chờ' : conc < 0.05 ? 'chờ sự kiện' : `${Math.max(1, Math.round(conc))} bản chạy song song`);
+    }
+    // the DR Region is far away and small on screen: only the Region, its entry and its database
+    // (and the backup copies, all backup & restore keeps there) carry a label; the rest show on hover
+    for (const [key, m] of this.nodes) {
+      if (!key.startsWith('dr:') || m.removing) continue;
+      const always = key === 'dr:region' || key === 'dr:elb' || key === 'dr:apigw' || key === 'dr:rds' || key === 'dr:dynamodb' || (key === 'dr:vault' && c.dr === 'backup');
+      if (key.startsWith('dr:ec2:')) {
+        const i = d.fleet.find((x) => 'dr:ec2:' + x.id === key);
+        if (i) m.setLabelSub(i.state === 'pending' ? 'khởi động…' : `CPU ${Math.round((r?.cpu || 0) * 100)}%`);
+      }
+      m.setLabelVisible(this.labelsOn && (always || m.highlighted || m.selected));
     }
   }
 
@@ -552,6 +755,8 @@ export class SandboxScene {
     const fail = () => (failSeg = segs.length - 1);
     const isStatic = Math.random() < f.staticShare;
     let color = isStatic ? COLOR.static : COLOR.dynamic;
+    // Route 53 sends some users — all of them after a failover — to the DR Region
+    if (f.drShare > 0 && f.dr && Math.random() < f.drShare) return this._spawnDr(start, isStatic, color);
     // a release rolling out: with a canary, `share` of the requests go to the new version's own
     // target (it answers 500 to dynamic ones); all at once, the servers themselves run it
     const dep = f.deploy;
@@ -560,6 +765,15 @@ export class SandboxScene {
     if (f.cf) {
       hop('cloudfront');
       if (isStatic && Math.random() < f.cfHit) return this._emit(segs, color, -1, 'cloudfront');
+    }
+    // the primary Region is cut off: past CloudFront's edge cache nothing answers there — except that
+    // CloudFront's origin group fetches static misses from the replica bucket in the DR Region
+    if (f.regionDown) {
+      if (isStatic && f.s3 && f.s3Failover && hop('dr:s3')) return this._emit(segs, color, -1);
+      const entry = isStatic && f.s3 ? 's3' : f.compute !== 'ec2' ? 'apigw' : f.elb ? 'elb' : f.targets[0] ? 'ec2:' + f.targets[0].id : 'region';
+      if (!hop(entry)) hop('region');
+      fail();
+      return this._emit(segs, color, failSeg);
     }
     if (isStatic && f.s3) {
       hop('s3');
@@ -631,6 +845,52 @@ export class SandboxScene {
         color = COLOR.dynamic;
         if (Math.random() < f.dbFail) fail();
       }
+    }
+    return this._emit(segs, color, failSeg);
+  }
+
+  // a request Route 53 sent to the DR Region: CloudFront's edge first (it is global), then the replica
+  // bucket or the stack there — which fails while it is still being switched on
+  _spawnDr(start, isStatic, color) {
+    const f = this.sim.flows;
+    const r = f.dr;
+    const d = this.sim.dr;
+    const segs = [];
+    let from = null;
+    let failSeg = -1;
+    const hop = (key) => {
+      const b = this._anchorOf(key);
+      if (!b) return false;
+      segs.push(from ? this._seg(from, key) : arc(start, b));
+      from = key;
+      return true;
+    };
+    const fail = () => (failSeg = segs.length - 1);
+    const dead = () => {
+      if (!segs.length || from === 'cloudfront') hop('dr:region');
+      fail();
+      return this._emit(segs, color, failSeg);
+    };
+    if (f.cf) {
+      hop('cloudfront');
+      if (isStatic && Math.random() < f.cfHit) return this._emit(segs, color, -1, 'cloudfront');
+    }
+    if (isStatic && f.s3) return hop('dr:s3') ? this._emit(segs, color, -1) : dead();
+    if (f.compute === 'ec2') {
+      if (d.elb) hop('dr:elb');
+      const running = d.fleet.filter((i) => i.state === 'running');
+      if (!running.length) return dead();
+      const i = d.elb ? running[Math.floor(Math.random() * running.length)] : running.reduce((a, b) => (a.n < b.n ? a : b));
+      if (!hop('dr:ec2:' + i.id)) return null;
+      if (Math.random() < r.appFail) return dead();
+    } else {
+      if (!d.lambda || !hop('dr:apigw')) return dead();
+      hop('dr:lambda');
+    }
+    if (!isStatic) {
+      const db = f.db === 'rds' ? 'dr:rds' : f.db === 'dynamodb' ? 'dr:dynamodb' : null;
+      if (db && hop(db)) color = COLOR.dynamic;
+      if (Math.random() < r.dbFail) fail();
     }
     return this._emit(segs, color, failSeg);
   }
@@ -777,6 +1037,8 @@ export class SandboxScene {
         if (log) this.fx.packets.spawn([log], { color: '#fca5a5', size: 0.6, speed: 10 });
       }
     }
+    this._drPackets(dt);
+    this._analyticsPackets(dt);
     // synchronous replication stream primary → standby
     const db = this.sim.db;
     const p = db.find((n) => n.role === 'primary' && n.state === 'ok');
@@ -787,6 +1049,90 @@ export class SandboxScene {
         this._replAcc = 0;
         const seg = this._seg('rds:' + p.id, 'rds:' + s.id);
         if (seg) this.fx.packets.spawn([seg], { color: COLOR.db, speed: 9, size: 0.7 });
+      }
+    }
+  }
+
+  // reports: the zero-ETL stream of changes into Redshift, the nightly export into the lake now and
+  // then and, while a report runs, the sales team's queries — to the production database, a DynamoDB
+  // Scan, Athena (which reads the lake) or Redshift
+  _analyticsPackets(dt) {
+    const sim = this.sim;
+    const c = sim.config;
+    if (sim.regionDown) return;
+    const src = this._dataKey();
+    const send = (a, b, opts) => {
+      const s = this._seg(a, b);
+      if (s) this.fx.packets.spawn([s], opts);
+    };
+    if (c.analytics === 'redshift' && src && this.node('analytics:redshift')) {
+      this._zetlAcc = (this._zetlAcc || 0) + dt * this.speed * 1.6;
+      if (this._zetlAcc >= 1) {
+        this._zetlAcc = 0;
+        send(src, 'analytics:redshift', { color: COLOR.db, size: 0.6, speed: 12, onDone: () => this.node('analytics:redshift')?.pulse() });
+      }
+    }
+    if (c.analytics === 'athena' && src && this.node('analytics:lake')) {
+      this._exportAcc = (this._exportAcc || 0) + dt * this.speed * 0.25;
+      if (this._exportAcc >= 1) {
+        this._exportAcc = 0;
+        send(src, 'analytics:lake', { color: '#fbbf24', size: 0.9, speed: 10 });
+      }
+    }
+    const r = sim.report;
+    if (!r.active || !this.node('analytics:bi')) return;
+    const heavy = r.where === 'prod' || r.where === 'scan';
+    this._reportAcc = (this._reportAcc || 0) + dt * this.speed * (heavy ? 2.5 : 4);
+    while (this._reportAcc >= 1) {
+      this._reportAcc -= 1;
+      if (r.where === 'athena') {
+        const s1 = this._seg('analytics:bi', 'analytics:athena');
+        const s2 = this._seg('analytics:athena', 'analytics:lake');
+        if (s1 && s2) this.fx.packets.spawn([s1, s2], { color: '#c4b5fd', size: 0.7, speed: 12 });
+      } else {
+        const to = r.where === 'redshift' ? 'analytics:redshift' : r.where === 'scan' ? 'dynamodb' : src;
+        if (to && this.node(to)) send('analytics:bi', to, { color: heavy ? '#fbbf24' : '#c4b5fd', size: heavy ? 0.9 : 0.7, speed: heavy ? 8 : 12 });
+      }
+    }
+  }
+
+  // the DR Region's copy of the data — RDS replication, a global table both ways, S3 Cross-Region
+  // Replication, or backup copies now and then — and Route 53 checking both Regions' health
+  _drPackets(dt) {
+    const sim = this.sim;
+    const c = sim.config;
+    const d = sim.dr;
+    if (c.dr === 'none' || !this.node('dr:region')) return;
+    const send = (a, b, opts) => {
+      const s = this._seg(a, b);
+      if (s) this.fx.packets.spawn([s], opts);
+    };
+    if (!sim.regionDown) {
+      this._drAcc = (this._drAcc || 0) + dt * this.speed * (d.vault ? 0.35 : 1.4);
+      if (this._drAcc >= 1) {
+        this._drAcc = 0;
+        const src = this._dataKey();
+        if (d.vault) {
+          if (src && this.node('dr:vault')) send(src, 'dr:vault', { color: '#a3e635', size: 0.8, speed: 11, onDone: () => this.node('dr:vault')?.pulse?.() });
+        } else {
+          const dst = c.database === 'rds' ? 'dr:rds' : c.database === 'dynamodb' ? 'dr:dynamodb' : null;
+          if (src && dst && this.node(dst)) {
+            send(src, dst, { color: COLOR.db, size: 0.7, speed: 12 });
+            // a global table copies the writes made in either Region
+            if (c.database === 'dynamodb' && d.share > 0) send(dst, src, { color: COLOR.db, size: 0.7, speed: 12 });
+          }
+          if (d.s3 === 'ready' && this.node('s3') && this.node('dr:s3') && Math.random() < 0.5) send('s3', 'dr:s3', { color: '#86efac', size: 0.7, speed: 12 });
+        }
+      }
+    }
+    if (c.route53 && this.node('route53')) {
+      this._hcAcc = (this._hcAcc || 0) + dt * this.speed * 0.8;
+      if (this._hcAcc >= 1) {
+        this._hcAcc = 0;
+        const e1 = c.compute === 'ec2' ? (c.elb ? 'elb' : null) : 'apigw';
+        const e2 = c.compute === 'ec2' ? (d.elb ? 'dr:elb' : null) : d.lambda ? 'dr:apigw' : null;
+        if (e1 && this.node(e1)) send('route53', e1, { color: COLOR.dns, size: 0.55, speed: 14, failSeg: sim.regionDown ? 0 : -1 });
+        if (e2 && this.node(e2)) send('route53', e2, { color: COLOR.dns, size: 0.55, speed: 14 });
       }
     }
   }
@@ -830,12 +1176,23 @@ export class SandboxScene {
         if (!inst) continue;
         say('ec2:' + t.id, inst.state === 'failed' ? 'Không phản hồi' : '503 · quá tải');
       }
-    } else {
+    } else if (!f.regionDown) {
       if (f.gwFail > 0.02) say('apigw', '429 Too Many Requests');
       if (f.lambdaFail > 0.02) say('lambda', '429 · vượt giới hạn');
     }
-    if (f.dbFail > 0.05 && f.dbTarget) say(f.db === 'dynamodb' ? 'dynamodb' : 'rds:' + f.dbTarget, '500 · lỗi database');
+    // a report hogging the production database: queries wait behind it and time out
+    if (f.reportHit && f.dbTarget) say('rds:' + f.dbTarget, 'chờ báo cáo · quá thời gian', 'warn', 2.4);
+    else if (f.dbFail > 0.05 && f.dbTarget) say(f.db === 'dynamodb' ? 'dynamodb' : 'rds:' + f.dbTarget, '500 · lỗi database');
+    if (this.sim.report.active && this.sim.report.where === 'scan') say('dynamodb', 'Scan cả bảng · tốn đơn vị đọc', 'warn', 3);
     if (f.extDown && !f.queue && f.outFailRps > 0) say('external', '503 · đối tác không phản hồi', 'bad', 2.4);
+    // the lost Region, and a DR Region still being switched on
+    if (f.regionDown && f.drShare < 1) say(f.compute !== 'ec2' ? 'apigw' : f.elb ? 'elb' : f.targets[0] ? 'ec2:' + f.targets[0].id : 'region', 'Không phản hồi · Region mất kết nối', 'bad', 2.4);
+    const d = this.sim.dr;
+    if (f.drShare > 0 && f.dr) {
+      if (d.phase === 'rebuilding' || (f.dr.appFail > 0.05 && !this.node('dr:elb'))) say('dr:region', d.phase === 'rebuilding' ? 'Chưa có gì để phục vụ · 503' : 'Chưa sẵn sàng · 503', 'bad', 2.4);
+      else if (f.dr.appFail > 0.05) say('dr:elb', 'Chưa đủ máy · 503', 'bad', 2.4);
+      if (d.db === 'promoting') say('dr:rds', 'Đang promote · ghi lỗi', 'warn', 2.4);
+    }
     if (this.sim.data.wiped) {
       const key = this._dataKey();
       if (key) say(key, this.sim.data.restoring ? 'đang khôi phục dữ liệu…' : '404 · không tìm thấy đơn hàng', this.sim.data.restoring ? 'warn' : 'bad', 2.4);
@@ -1101,6 +1458,54 @@ export class SandboxScene {
         if (m) m.flash('allow');
         break;
       }
+      case 'regionDown': {
+        const R = LAYOUT.region;
+        this.rig?.shake(0.5, 2);
+        this.fx.ring(new THREE.Vector3(R.x, 0.3, R.z), { color: '#f87171', r0: 2, r1: 24, dur: 1.8 });
+        this.fx.callout(new THREE.Vector3(R.x, 4.5, R.z), `REGION SẬP · ${REGION.code}`, { kind: 'bad', dur: 3.6, rise: 2 });
+        this.sfx?.play('alarm');
+        break;
+      }
+      case 'drFailover':
+      case 'drDecide': {
+        const a = pos('route53');
+        if (a) {
+          this.fx.ring({ x: a.x, y: 0, z: a.z }, { color: '#c4b5fd', r0: 0.5, r1: 5, dur: 1.2 });
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.4, a.z), e.type === 'drFailover' ? `Health check ✗ → ${DR.city}` : 'Health check ✗ · chờ quyết định', { kind: 'warn', dur: 3 });
+        }
+        this.sfx?.play('alert');
+        break;
+      }
+      case 'drSwitchOn':
+      case 'drRebuild':
+      case 'drRebuilt':
+      case 'drLive':
+      case 'drFailbackDone':
+      case 'drTooLate': {
+        const D = LAYOUT.dr;
+        const text = { drSwitchOn: 'Runbook: bật máy chủ…', drRebuild: 'Dựng lại từ CloudFormation…', drRebuilt: 'Đã dựng xong ✓', drLive: `${DR.city} gánh 100% ✓`, drFailbackDone: 'Trở lại dự phòng', drTooLate: 'Không còn gì để sao chép!' }[e.type];
+        const kind = { drRebuilt: 'good', drLive: 'good', drTooLate: 'bad' }[e.type] || 'info';
+        this.fx.callout(new THREE.Vector3(D.x, 3.4, D.z), text, { kind, dur: 3 });
+        if (e.type === 'drRebuild' || e.type === 'drSwitchOn') this.fx.beam(new THREE.Vector3(D.x, 0, D.z), { color: '#7dd3fc', r: 3, h: 12, dur: 1.6 });
+        else this.fx.ring(new THREE.Vector3(D.x, 0.3, D.z), { color: kind === 'bad' ? '#f87171' : '#4ade80', r0: 1, r1: 12, dur: 1.4 });
+        this.sfx?.play(kind === 'good' ? 'good' : kind === 'bad' ? 'alarm' : 'build');
+        break;
+      }
+      case 'drPromote':
+      case 'drPromoted': {
+        const a = pos('dr:rds');
+        if (a) {
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.2, a.z), e.type === 'drPromote' ? 'Promote → primary…' : 'Primary mới ✓', { kind: e.type === 'drPromote' ? 'warn' : 'good', dur: 2.6 });
+          if (e.type === 'drPromoted') this.fx.ring({ x: a.x, y: 0, z: a.z }, { color: '#f0abfc', r0: 0.5, r1: 4, dur: 1.2 });
+        }
+        break;
+      }
+      case 'regionRestored': {
+        const R = LAYOUT.region;
+        this.fx.ring(new THREE.Vector3(R.x, 0.3, R.z), { color: '#7dd3fc', r0: 2, r1: 22, dur: 1.8 });
+        this.fx.callout(new THREE.Vector3(R.x, 4.5, R.z), `${REGION.city} hoạt động lại`, { kind: 'good', dur: 3 });
+        break;
+      }
       case 'siteDown':
         this.sfx?.play('alarm');
         break;
@@ -1177,10 +1582,17 @@ export class SandboxScene {
       rds: [[L.rdsX, 0, 0], 26],
       'az-a': [[L.az.a.x, 0, L.az.a.z], 26],
       'az-b': [[L.az.b.x, 0, L.az.b.z], 26],
+      dr: [[L.dr.x, 0, L.dr.z], 30],
+      analytics: [L.analytics.focus, 16],
     };
     const v = map[key];
     if (!v) return null;
     return { target: new THREE.Vector3(...v[0]), dist: v[1] };
+  }
+
+  // where the home camera looks: further back once a DR Region stands behind the primary one
+  homeView() {
+    return this.sim.config.dr !== 'none' ? HOME_VIEW_DR : HOME_VIEW;
   }
 
   highlight(key) {
@@ -1207,6 +1619,7 @@ export class SandboxScene {
     const lam = this.node('lambda');
     if (lam) lam.setEnvs(this.sim.lambda.conc, this.sim.lambda.coldRate);
     this.node('lambdaV2')?.setEnvs(this.sim.lambda.conc * this.sim.deploy.share);
+    this.node('dr:lambda')?.setEnvs((this.sim.flows.dr?.appServed || 0) * LAMBDA.duration);
     // the worker gets messages in batches: concurrency ≈ batches per second × run time
     this.node('worker')?.setEnvs((this.sim.flows.queueOut / SQS.batch) * LAMBDA.duration);
     this.fx.packets.timeScale = Math.max(0.0001, speed);

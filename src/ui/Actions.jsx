@@ -1,6 +1,7 @@
-// Sandbox, right panel: the events you can throw at the architecture (earthquake, broken
-// server, a million users, database failure, attacks, a payment-provider outage, an
-// accidental delete, a leaked key, a bad deploy, night time, repair), traffic and speed.
+// Sandbox, right panel: the events you can throw at the architecture (earthquake, a whole Region
+// going down, broken server, a million users, database failure, attacks, a payment-provider
+// outage, an accidental delete, a leaked key, a bad deploy, a heavy month-end report, night time,
+// repair), traffic and speed.
 import { useState } from 'react';
 import { ACTION_TITLE } from '../sim/lessons.js';
 import { USERS } from '../sim/constants.js';
@@ -11,6 +12,7 @@ import { Spark } from './MetricsBar.jsx';
 
 const ACTIONS = [
   { id: 'quake', icon: 'quake', title: 'Động đất', desc: 'phá huỷ một AZ', tone: 'bad' },
+  { id: 'regionDown', icon: 'region', title: 'Cả Region sập', desc: 'Singapore mất kết nối', tone: 'bad' },
   { id: 'serverFail', icon: 'fire', title: 'Server hỏng', desc: 'một EC2 cháy nguồn', tone: 'bad' },
   { id: 'spike', icon: 'crowd', title: '1 triệu người', desc: 'cùng truy cập', tone: 'warn' },
   { id: 'dbFail', icon: 'dbx', title: 'Database sự cố', desc: 'ổ đĩa primary hỏng', tone: 'bad' },
@@ -20,6 +22,7 @@ const ACTIONS = [
   { id: 'dataDelete', icon: 'trash', title: 'Xoá nhầm dữ liệu', desc: 'deploy lỗi chạy DELETE', tone: 'bad' },
   { id: 'leakedKey', icon: 'alert', title: 'Lộ access key', desc: 'key trên GitHub → máy đào coin', tone: 'bad' },
   { id: 'badDeploy', icon: 'bug', title: 'Deploy lỗi', desc: 'bản v2 trả lỗi 500', tone: 'bad' },
+  { id: 'report', icon: 'chart', title: 'Báo cáo cuối tháng', desc: 'quét 2 năm đơn hàng', tone: 'warn' },
   { id: 'night', icon: 'moon', title: 'Đêm khuya', desc: 'chỉ còn 500 người', tone: 'info' },
   { id: 'repair', icon: 'wrench', title: 'Phục hồi', desc: 'sửa mọi thứ', tone: 'good' },
 ];
@@ -46,15 +49,19 @@ export function Actions({ onAction }) {
   if (!snap) return null;
   const sc = snap.scenario;
 
+  // with the whole primary Region down only traffic, night and repair still make sense
+  const regionDown = snap.region === 'down';
   const disabled = (id) => {
-    if (id === 'dbFail' || id === 'sqlInjection') return config.database === 'none';
+    if (regionDown && !['repair', 'spike', 'night'].includes(id)) return true;
+    if (id === 'dbFail' || id === 'sqlInjection' || id === 'report') return config.database === 'none';
     if (id === 'dataDelete') return config.database === 'none' && config.compute !== 'ec2';
     if (id === 'quake') return snap.az[az] !== 'ok';
     return false;
   };
   const why = (id) => {
     if (!disabled(id)) return undefined;
-    if (id === 'dbFail' || id === 'sqlInjection') return 'Cần có database (RDS hoặc DynamoDB)';
+    if (regionDown) return 'Region chính đang sập — bấm Phục hồi trước';
+    if (id === 'dbFail' || id === 'sqlInjection' || id === 'report') return 'Cần có database (RDS hoặc DynamoDB)';
     if (id === 'dataDelete') return 'Kiến trúc này chưa lưu dữ liệu ở đâu — thêm DynamoDB hoặc RDS';
     return undefined;
   };

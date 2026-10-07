@@ -110,8 +110,36 @@ export const GUARDDUTY = { costPerHour: 0.006 };
 // within `shiftBack`
 export const DEPLOY = { rollout: 2, manualDetect: 12, manualRollback: 4, canaryShare: 0.1, alarmTime: 3, shiftBack: 1 };
 
+// Disaster recovery in a second Region (Tokyo). What runs there before a disaster depends on the
+// strategy: backup copies only (backup & restore), a live copy of the data with the servers switched
+// off (pilot light), a small copy that is always on (warm standby, `warmFleet` EC2) or a full copy
+// serving half the users all the time (active-active). Route 53 health checks need `detect` to call
+// the primary Region dead (3 failed checks 30 s apart plus the DNS TTL: 1–2 min in real life); warm
+// standby and active-active then fail over on their own. Pilot light and backup & restore wait for
+// someone to confirm the disaster and run the runbook (`decide`, real life 15–30 min); backup &
+// restore then rebuilds the whole stack from CloudFormation and the backup copies (`rebuild`, real
+// life hours). A database replica takes `promote` to accept writes (Aurora Global < 1 min, an RDS
+// read replica a few minutes) — until then the `writeShare` of dynamic requests that write fails.
+// Users in Vietnam reach Tokyo `extraMs` slower than Singapore. `copyCostPerHour`: the backup copies
+// kept in Tokyo. `passOutage`: the longest outage (simulated) still graded as "a few minutes"
+export const DR = { code: 'ap-northeast-1', city: 'Tokyo', detect: 3, decide: 3, promote: 2.5, rebuild: 14, warmFleet: 1, writeShare: 0.3, extraMs: 35, copyCostPerHour: 0.006, passOutage: 8 };
+export const REGION = { code: 'ap-southeast-1', city: 'Singapore' };
+
+// "month-end report": the sales team wants revenue by province and month over two years. On the
+// production RDS (a row store that is also taking orders) the query scans hundreds of millions of
+// rows for `prodTime` (real life: tens of minutes); every query that reaches the database waits
+// behind it (`extraMs`) and `failShare` of them time out. A Multi-AZ standby takes no queries, so it
+// cannot share the load. DynamoDB has no GROUP BY: the report becomes a full-table Scan summed up in
+// code — the site barely notices, but it takes `scanTime` and burns read units (`scanCostPerHour`
+// while it runs: about $3 for a 200 GB table). Off the production database it takes seconds: Athena
+// on last night's Parquet export in S3 (`athenaTime`), or Redshift Serverless kept seconds behind by
+// a zero-ETL integration (`redshiftTime`). Running costs are illustrative: the lake (S3 + the nightly
+// export) and Redshift Serverless at its 4 RPU base ($0.375 per RPU-hour), kept busy by the stream
+// of changes — zero-ETL has no fee of its own
+export const REPORT = { prodTime: 16, extraMs: 900, failShare: 0.3, scanTime: 14, scanCostPerHour: 6, athenaTime: 3, redshiftTime: 2, lakeCostPerHour: 0.012, redshiftCostPerHour: 1.5 };
+
 // how long each scenario is watched before the lesson card appears (simulated seconds)
-export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26, paymentDown: 30, dataDelete: 30, leakedKey: 24, badDeploy: 26 };
+export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26, paymentDown: 30, dataDelete: 30, leakedKey: 24, badDeploy: 26, regionDown: 40, report: 26 };
 export const SPIKE_HOLD = 30;
 export const NIGHT_HOLD = 18;
 

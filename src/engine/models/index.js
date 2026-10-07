@@ -30,6 +30,7 @@ import {
   VaultModel,
   ZoneModel,
 } from './misc.js';
+import { BoardModel, DashboardModel, RedshiftModel, TableModel } from './analytics.js';
 import {
   CloudFrontModel,
   DynamoDBModel,
@@ -107,7 +108,7 @@ const FACTORY = {
   ou: (o) => new ZoneModel({ kind: 'ou', category: 'management', color: CAT_COLOR.management, top: '#e0e7ff', side: '#a5b4fc', ...o }),
   scp: (o) => new TokenModel({ kind: 'scp', category: 'management', color: '#b45309', shape: 'card', text: 'SCP', glow: true, size: 1.1, ...o }),
   kinesis: (o) => new KinesisModel(o),
-  firehose: (o) => new TokenModel({ kind: 'firehose', category: 'integration', color: '#7c3aed', shape: 'card', text: 'Firehose', fontSize: 50, glow: true, size: 1.4, ...o }),
+  firehose: (o) => new TokenModel({ kind: 'firehose', category: 'analytics', color: '#8f6d07', shape: 'card', text: 'Firehose', fontSize: 50, glow: true, size: 1.4, ...o }),
   ssm: (o) => new SSMModel(o),
   backup: (o) => new VaultModel(o),
   // security & governance: IAM Identity Center, GuardDuty, AWS Config, Trusted Advisor
@@ -129,6 +130,27 @@ const FACTORY = {
   codebuild: (o) => new TokenModel({ kind: 'codebuild', category: 'devtools', color: '#0f766e', shape: 'cube', text: 'Build', fontSize: 62, glow: true, size: 1.2, ...o }),
   codedeploy: (o) => new TokenModel({ kind: 'codedeploy', category: 'devtools', color: '#115e59', shape: 'cube', text: 'Deploy', fontSize: 54, glow: true, size: 1.2, ...o }),
   xray: (o) => new TokenModel({ kind: 'xray', category: 'devtools', color: CAT_COLOR.devtools, shape: 'cube', text: 'X-Ray', fontSize: 62, glow: true, size: 1.4, ...o }),
+  // hybrid networking: a VPC peering connection, the Transit Gateway hub, both ends of a Site-to-Site
+  // VPN (the virtual private gateway on the VPC, the customer gateway router) and a Direct Connect location
+  pcx: (o) => new TokenModel({ kind: 'pcx', category: 'network', color: '#7c3aed', shape: 'card', text: 'Peering', fontSize: 50, glow: true, size: 1.1, ...o }),
+  tgw: (o) => new TokenModel({ kind: 'tgw', category: 'network', color: CAT_COLOR.network, shape: 'disc', text: 'TGW', fontSize: 92, glow: true, size: 2.2, ...o }),
+  vgw: (o) => new GateModel({ kind: 'vgw', category: 'network', color: '#7c3aed', dark: '#2e2366', scale: 0.85, ...o }),
+  cgw: (o) => new TokenModel({ kind: 'cgw', category: 'network', color: '#334155', shape: 'cube', text: 'Router', fontSize: 58, size: 1.1, ...o }),
+  dx: (o) => new TokenModel({ kind: 'dx', category: 'network', color: '#5b21b6', shape: 'cube', text: 'DX', fontSize: 96, glow: true, size: 1.4, ...o }),
+  // disaster recovery: Elastic Disaster Recovery's replication, Global Accelerator's entry points
+  drs: (o) => new TokenModel({ kind: 'drs', category: 'storage', color: '#4d7c0f', shape: 'cube', text: 'DRS', fontSize: 86, glow: true, size: 1.3, ...o }),
+  ga: (o) => new TokenModel({ kind: 'ga', category: 'network', color: '#6d28d9', shape: 'disc', text: 'GA', fontSize: 96, glow: true, size: 1.6, ...o }),
+  // analytics: the data lake's query engine and catalog, the warehouse, dashboards, search
+  athena: (o) => new TokenModel({ kind: 'athena', category: 'analytics', color: '#a87e06', shape: 'cube', text: 'Athena', fontSize: 58, glow: true, size: 1.4, ...o }),
+  glue: (o) => new TokenModel({ kind: 'glue', category: 'analytics', color: '#7d6008', shape: 'cube', text: 'Glue', fontSize: 80, glow: true, size: 1.2, ...o }),
+  catalog: (o) => new TokenModel({ kind: 'catalog', category: 'analytics', color: '#6b520b', shape: 'card', text: 'Catalog', fontSize: 54, glow: true, size: 1.3, ...o }),
+  lakeformation: (o) => new TokenModel({ kind: 'lakeformation', category: 'analytics', color: '#5b4a12', shape: 'card', text: 'LF', fontSize: 96, glow: true, size: 1.0, ...o }),
+  table: (o) => new TableModel(o),
+  board: (o) => new BoardModel(o),
+  redshift: (o) => new RedshiftModel(o),
+  quicksight: (o) => new DashboardModel(o),
+  osdash: (o) => new DashboardModel({ kind: 'osdash', chart: 'line', title: 'Log lỗi 5xx', ...o }),
+  opensearch: (o) => new TokenModel({ kind: 'opensearch', category: 'analytics', color: '#a87e06', shape: 'cube', text: 'OpenSearch', fontSize: 40, glow: true, size: 1.5, ...o }),
 };
 
 export function createModel(kind, opts = {}) {

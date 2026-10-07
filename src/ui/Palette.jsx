@@ -2,8 +2,10 @@
 // highlights the matching 3D model; warnings explain weak spots of the current design.
 import { CATEGORIES, LESSON_FOR, serviceById } from '../data/services.js';
 import { EC2, ASG, BUDGET } from '../sim/constants.js';
-import { natlessFailures, wellArchitected } from '../sim/lessons.js';
+import { DR } from '../sim/constants.js';
+import { DR_STRATEGY, natlessFailures, wellArchitected } from '../sim/lessons.js';
 import { PRESETS } from '../sim/presets.js';
+import { hasData } from '../sim/simulation.js';
 import { useState } from 'react';
 import { useApp, useSim } from '../state/store.js';
 import { Icon, ServiceIcon } from './icons.jsx';
@@ -91,8 +93,38 @@ function warnings(c) {
   if (!c.guardduty) w.push('Chưa bật GuardDuty: access key bị lộ có thể bị dùng để đào coin hàng giờ mà không ai hay.');
   if (!c.canary) w.push('Deploy kiểu một lần: bản có lỗi chạy trên mọi máy cùng lúc — bật canary + tự rollback để chỉ khoảng 10% traffic gặp lỗi.');
   if (!c.budget) w.push('Chưa đặt AWS Budgets: chi phí tăng vọt (ví dụ khi 1 triệu người ùa vào) chỉ lộ ra khi nhận hoá đơn.');
+  if (c.dr === 'none') w.push('Mọi thứ nằm trong một Region: cả Region sập là website sập — Multi-AZ không đỡ được. Cân nhắc DR sang Region khác.');
+  if (c.database === 'rds' && c.analytics === 'none') w.push('Báo cáo chạy thẳng trên database production: một truy vấn phân tích nặng làm website chậm và lỗi — tách sang S3 + Athena hoặc Redshift.');
+  if (c.database === 'dynamodb' && c.analytics === 'none') w.push('DynamoDB không có GROUP BY: báo cáo phải Scan cả bảng, vừa chậm vừa tốn — xuất sang S3 + Athena hoặc Redshift.');
   return w;
 }
+
+// what each DR strategy keeps in the second Region, and what it buys
+const DR_DESC = {
+  none: 'đang tắt: mọi thứ nằm trong một Region',
+  backup: `chép bản sao lưu sang ${DR.city} · RPO, RTO: vài giờ`,
+  pilot: `dữ liệu đồng bộ sang ${DR.city}, máy tắt · RTO: vài chục phút`,
+  warm: `bản thu nhỏ chạy sẵn ở ${DR.city} · RTO: vài phút`,
+  active: `${DR.city} phục vụ một nửa người dùng · RTO gần 0`,
+};
+const DR_TIP = {
+  none: 'Không có Region dự phòng',
+  backup: 'Backup & restore: AWS Backup chép bản sao sang Region khác; sự cố thì dựng lại tất cả từ CloudFormation',
+  pilot: 'Pilot light: dữ liệu sao chép liên tục, máy chủ tắt — sự cố thì bật máy, promote database',
+  warm: 'Warm standby: một bản thu nhỏ đầy đủ luôn chạy — Route 53 tự chuyển, Auto Scaling thêm máy',
+  active: 'Active-active: hai Region cùng phục vụ người dùng — đắt nhất, gần như không gián đoạn',
+};
+
+// where reports run, and what that costs
+const ANALYTICS_DESC = {
+  athena: 'bản xuất Parquet mỗi đêm · $5/TB quét',
+  redshift: 'zero-ETL, chỉ trễ vài giây · ≈ $1,5/giờ',
+};
+const ANALYTICS_TIP = {
+  none: 'Báo cáo chạy thẳng trên database đang phục vụ website',
+  athena: 'Database xuất sang S3 (Parquet, chia theo tháng) mỗi đêm; báo cáo chạy bằng Athena, trả theo dữ liệu quét',
+  redshift: 'Zero-ETL chép mọi thay đổi sang Redshift Serverless sau vài giây; báo cáo chạy trên kho dữ liệu lưu theo cột',
+};
 
 // six-pillar score of the current design; a failing check can be fixed in one click
 function WellArchitected({ c, set }) {
@@ -319,6 +351,70 @@ export function Palette() {
           <Toggle on={c.backup} onChange={(v) => set({ backup: v })} label="AWS Backup" />
         </Row>
       )}
+
+      {c.database !== 'none' && (
+        <>
+          <h3 className="group-title" style={{ '--c': CATEGORIES.analytics.color }}>
+            Phân tích dữ liệu
+          </h3>
+          <Row
+            id="analytics"
+            sid={c.analytics === 'athena' ? 'athena' : 'redshift'}
+            title="Chạy báo cáo ở"
+            desc={ANALYTICS_DESC[c.analytics] || (c.database === 'rds' ? 'database production · báo cáo nặng làm chậm web' : 'DynamoDB không có GROUP BY · phải Scan cả bảng')}
+            hoverKey={c.analytics === 'none' ? (c.database === 'rds' ? 'rds' : 'dynamodb') : 'analytics'}
+          />
+          <div className="seg three" role="radiogroup" aria-label="Nơi chạy báo cáo">
+            {[
+              ['none', 'Database'],
+              ['athena', 'Athena'],
+              ['redshift', 'Redshift'],
+            ].map(([v, t]) => (
+              <button
+                key={v}
+                role="radio"
+                aria-checked={c.analytics === v}
+                className={c.analytics === v ? 'is-on' : ''}
+                title={ANALYTICS_TIP[v]}
+                onClick={() => set({ analytics: v })}
+                onMouseEnter={() => engine.sandbox.highlight(v === 'none' ? (c.database === 'rds' ? 'rds' : 'dynamodb') : 'analytics')}
+                onMouseLeave={() => engine.sandbox.highlight(null)}
+              >
+                {t}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      <h3 className="group-title" style={{ '--c': CATEGORIES.storage.color }}>
+        Dự phòng thảm hoạ (DR)
+      </h3>
+      <Row id="dr" sid="dr" title="Region dự phòng" desc={DR_DESC[c.dr]} />
+      <div className="seg five" role="radiogroup" aria-label="Chiến lược DR">
+        {[
+          ['none', 'Không'],
+          ['backup', 'Backup'],
+          ['pilot', 'Pilot'],
+          ['warm', 'Warm'],
+          ['active', 'Active'],
+        ].map(([v, t]) => (
+          <button
+            key={v}
+            role="radio"
+            aria-checked={c.dr === v}
+            className={c.dr === v ? 'is-on' : ''}
+            title={DR_TIP[v]}
+            aria-label={DR_STRATEGY[v].name}
+            // failing over is Route 53's job, and backup & restore needs the backups it restores from
+            onClick={() => set(v === 'none' ? { dr: 'none' } : { dr: v, route53: true, ...(v === 'backup' && hasData(c) ? { backup: true } : {}) })}
+            onMouseEnter={() => engine.sandbox.highlight('dr')}
+            onMouseLeave={() => engine.sandbox.highlight(null)}
+          >
+            {t}
+          </button>
+        ))}
+      </div>
 
       <h3 className="group-title" style={{ '--c': CATEGORIES.management.color }}>
         Chi phí

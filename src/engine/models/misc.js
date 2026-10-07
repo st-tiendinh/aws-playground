@@ -3,7 +3,7 @@
 // AMIs, messages…) and the explore-only services: CloudWatch, SQS, IAM, EBS, KMS,
 // CloudTrail, EventBridge, CloudFormation, AWS Budgets, ACM, Step Functions, EFS, ECR,
 // Aurora, Network ACL, Kinesis Data Streams, Systems Manager, AWS Backup — and the Shared
-// Responsibility Model stack.
+// Responsibility Model stack. (More analytics models live in analytics.js.)
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CAT_COLOR, COLOR } from '../palette.js';
@@ -204,8 +204,9 @@ export class ZoneModel extends Model {
     this._crack += (target - this._crack) * Math.min(1, dt * (target ? 2.5 : 1.2));
     this.crackMat.opacity = this._crack * (0.85 + 0.15 * Math.sin(t * 5));
     this.body.position.y = -0.25 * this._crack;
+    // a destroyed AZ flickers; one cut off with its whole Region (power, network) goes dark
     for (const b of this.buildings) {
-      b.mat.emissiveIntensity = this.state === 'failed' ? (Math.random() < 0.04 ? 0.5 : 0.02) : this.night ? 1.1 : 0.35;
+      b.mat.emissiveIntensity = this.state === 'failed' ? (Math.random() < 0.04 ? 0.5 : 0.02) : this.state === 'off' ? 0.02 : this.night ? 1.1 : 0.35;
     }
   }
 }
@@ -1341,9 +1342,13 @@ export class AuroraModel extends Model {
     }
     // writer instance in the middle, read-only replicas either side
     const disk = this.mat(this.color, { roughness: 0.38 });
+    this.rings = [];
     for (let k = 0; k < 3; k++) {
       this.add(new THREE.CylinderGeometry(0.42, 0.42, 0.2, 32), disk, [0, 0.48 + k * 0.26, -0.2]);
-      this.add(new THREE.TorusGeometry(0.425, 0.02, 6, 40), this.glow('#f5c2ff', 1.2), [0, 0.58 + k * 0.26, -0.2], { rot: [Math.PI / 2, 0, 0], shadow: false });
+      const rm = this.glow('#f5c2ff', 1.2);
+      rm.userData.noLook = true;
+      this.add(new THREE.TorusGeometry(0.425, 0.02, 6, 40), rm, [0, 0.58 + k * 0.26, -0.2], { rot: [Math.PI / 2, 0, 0], shadow: false });
+      this.rings.push(rm);
     }
     const replica = this.mat('#f5d0fe', { roughness: 0.4, transparent: true, opacity: 0.85 });
     this.readers = [];
@@ -1357,12 +1362,18 @@ export class AuroraModel extends Model {
     }
     this.count = opts.count ?? AURORA_READERS;
     this.wave = 0;
+    this.load = opts.load ?? 0;
     this.finish();
   }
 
   // number of reader instances (Aurora Replicas)
   setCount(n) {
     this.count = Math.max(0, Math.min(AURORA_READERS, Math.round(n)));
+  }
+
+  // how busy the writer is: past 85% its rings flash amber (a heavy report hogging the CPU)
+  setLoad(v) {
+    this.load = v;
   }
 
   // a write arrived: it ripples across the six copies
@@ -1375,6 +1386,11 @@ export class AuroraModel extends Model {
     for (const [k, m] of this.copies.entries()) {
       const hit = Math.max(0, Math.sin((1 - this.wave) * Math.PI * 3 - k * 0.5));
       m.emissiveIntensity = this.state === 'failed' ? 0.1 : 0.6 + (this.wave > 0 ? hit * 1.8 : 0.2 * Math.sin(t * 2 + k));
+    }
+    const busy = this.load > 0.85 && this.state !== 'failed';
+    for (const [k, m] of this.rings.entries()) {
+      m.emissive.set(busy ? COLOR.warn : '#f5c2ff');
+      m.emissiveIntensity = this.state === 'failed' ? 0.1 : busy ? 1 + 1.6 * Math.max(0, Math.sin(t * 12 - k * 0.9)) : 1.2;
     }
     for (const [k, r] of this.readers.entries()) {
       r.s += ((k < this.count ? 1 : 0) - r.s) * Math.min(1, dt * 5);
@@ -1544,18 +1560,18 @@ const kdsZ = (k, n) => (k - (n - 1) / 2) * KDS_GAP;
 
 export class KinesisModel extends Model {
   constructor(opts = {}) {
-    super('kinesis', { category: 'integration', ...opts });
-    this.color = CAT_COLOR.integration;
+    super('kinesis', { category: 'analytics', ...opts });
+    this.color = CAT_COLOR.analytics;
     this.L = 4.4;
     this.height = 0.8;
     this.radius = 2.7;
     this.anchorY = 0.55;
     // the base stretches in depth with the number of shards (geometry is 1 deep)
-    this.base = this.add(new RoundedBoxGeometry(this.L + 0.9, 0.24, 1, 2, 0.08), this.mat('#4a1530'), [0, 0.12, 0]);
+    this.base = this.add(new RoundedBoxGeometry(this.L + 0.9, 0.24, 1, 2, 0.08), this.mat('#33270a'), [0, 0.12, 0]);
     const laneGeo = new RoundedBoxGeometry(this.L, 0.1, 0.6, 2, 0.04);
     const railGeo = new THREE.BoxGeometry(this.L, 0.025, 0.04);
     const dotGeo = new RoundedBoxGeometry(0.24, 0.16, 0.3, 2, 0.04);
-    const laneMat = this.mat('#6b1d45');
+    const laneMat = this.mat('#55410f');
     this.railMat = this.glow(this.color, 1.2);
     const dotMat = this.glow('#fde68a', 0.8);
     this.count = Math.max(1, Math.min(KDS_MAX, opts.count ?? 1));
