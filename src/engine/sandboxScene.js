@@ -37,10 +37,17 @@ export const LAYOUT = {
   vpce: [-5.3, 0, 7.5],
   // AWS Backup vault, outside the VPC
   backup: [-10, 0, -9],
+  // account-level threat detection, and the miners someone runs with a leaked key in another Region
+  guardduty: [-27, 0, -6],
+  miners: { x: -27, z: -18.5 },
   // subnet tiles inside each AZ strip: [public (NAT) | app servers | data]
   tiles: { pub: { x: 1.8, w: 3.0 }, app: { x: 9.05, w: 10.9 }, data: { x: 17.7, w: 5.6 } },
   asg: { x: 9.05, z: 0, w: 11.4, d: 26.4 },
 };
+
+// GuardDuty and the miners sit at the far left of the home view: their callouts lean right so the
+// text does not slip under the left panel
+const LEAK_TEXT_DX = 2.5;
 
 // everything the sandbox can show, users island to data tier plus the packets arcing above:
 // the drifting sky clouds stay out of the way of this box
@@ -82,6 +89,7 @@ const TITLES = {
   worker: ['Lambda worker', 'xử lý đơn nền'],
   vpce: ['VPC Endpoint', 'S3 · SQS'],
   backup: ['AWS Backup', 'sao lưu + PITR'],
+  guardduty: ['Amazon GuardDuty', 'đọc CloudTrail · Flow Logs · DNS'],
 };
 
 const pickWeighted = (list) => {
@@ -238,6 +246,14 @@ export class SandboxScene {
     this._ensure('worker', c.queue, () => createModel('lambda', { id: 'worker', position: L.worker, scale: 0.8 }));
     this._ensure('vpce', c.vpce, () => createModel('vpce', { id: 'vpce', position: L.vpce }));
     this._ensure('backup', c.backup, () => createModel('backup', { id: 'backup', position: L.backup }));
+    this._ensure('guardduty', c.guardduty, () => createModel('guardduty', { id: 'guardduty', position: L.guardduty }));
+    for (let i = 0; i < 6; i++) {
+      this._ensure('miner:' + i, sim.leak.active, () => {
+        const m = createModel('miner', { id: 'miner:' + i, position: [L.miners.x + (i % 3) * 1.8 - 1.8, 0, L.miners.z + Math.floor(i / 3) * 1.8] });
+        if (i === 1) m.setLabel('Máy đào coin', 'us-east-1 · key bị lộ');
+        return m;
+      });
+    }
     // SQS backlog (log scale: 1 → 1 message, 10 → 4, 100 → 8, 1000+ → 12), vault, outside APIs
     this.node('sqs')?.setQueue(Math.min(12, Math.ceil(Math.log10(sim.queue.depth + 1) * 4)));
     this.node('backup')?.setState(sim.data.restoring ? 'restoring' : 'ok');
@@ -317,7 +333,8 @@ export class SandboxScene {
     }
     for (const key of [...this.nodes.keys()]) if (key.startsWith('rds:') && !dbSeen.has(key)) this._remove(key);
 
-    // NAT Gateways in the public subnet of their AZ
+    // NAT Gateways in the public subnet of their AZ — or a Regional NAT Gateway's presence in
+    // each AZ, see-through while it is still expanding there
     const natSeen = new Set();
     for (const n of sim.nat) {
       const key = 'nat:' + n.id;
@@ -325,11 +342,13 @@ export class SandboxScene {
       let m = this.nodes.get(key);
       if (!m) {
         m = createModel('nat', { id: key, position: [L.natX, AZ_Y, L.az[n.az].z], scale: 1.15 });
-        m.setLabel('NAT Gateway', 'Elastic IP');
+        m._title = n.regional ? 'Regional NAT' : 'NAT Gateway';
+        m.setLabel(m._title, n.regional ? '' : 'Elastic IP');
         m.natId = n.id;
         this._add(key, m);
       }
-      m.setState(n.state === 'ok' ? 'ok' : 'failed');
+      m.setState(n.state === 'failed' ? 'failed' : 'ok');
+      m.setGhost(n.state === 'expanding');
       this.fx.setEmitter('smoke:' + key, n.state === 'failed' ? { kind: 'smoke', rate: 1.8, pos: m.anchor(new THREE.Vector3(), 0.6) } : null);
     }
     for (const key of [...this.nodes.keys()]) if (key.startsWith('nat:') && !natSeen.has(key)) this._remove(key);
@@ -383,6 +402,11 @@ export class SandboxScene {
       worker.setLabelState(waiting ? 'warn' : null);
     }
     this.node('vpce')?.setLabelSub(sim.config.queue ? 'S3 miễn phí · SQS riêng tư' : 'S3 · miễn phí');
+    const gd = this.node('guardduty');
+    if (gd) {
+      gd.setLabelSub(sim.leak.detected && sim.leak.active ? 'FINDING · High' : 'đọc CloudTrail · Flow Logs · DNS');
+      gd.setLabelState(sim.leak.detected && sim.leak.active ? 'bad' : null);
+    }
     const vault = this.node('backup');
     if (vault) {
       vault.setLabelSub(sim.data.restoring ? `đang khôi phục… ${Math.ceil(sim.data.timer)} giây` : 'hằng ngày + liên tục (PITR)');
@@ -438,8 +462,21 @@ export class SandboxScene {
     for (const n of sim.nat) {
       const md = this.node('nat:' + n.id);
       if (!md) continue;
-      md.setLabelSub(n.state === 'failed' ? 'HỎNG' : sim.config.nat === 'single' ? 'dùng chung cho cả 2 AZ' : `riêng cho ${AZ_LABEL[n.az]}`);
-      md.setLabelState(n.state === 'failed' ? 'bad' : null);
+      // switching between zonal and Regional NAT keeps the same models: retitle them
+      const title = n.regional ? 'Regional NAT' : 'NAT Gateway';
+      if (md._title !== title) {
+        md._title = title;
+        md.setLabel(title, '');
+      }
+      // while expanding, this AZ's traffic goes through the presence in another AZ (if ready)
+      const via = n.state === 'expanding' && sim.nat.find((x) => x !== n && x.state === 'ok');
+      let sub;
+      if (n.state === 'failed') sub = 'HỎNG';
+      else if (n.state === 'expanding') sub = via ? `đang mở rộng… · tạm đi qua ${AZ_LABEL[via.az]}` : 'đang mở rộng…';
+      else if (n.regional) sub = `phần ở ${AZ_LABEL[n.az]}`;
+      else sub = sim.config.nat === 'single' ? 'dùng chung cho cả 2 AZ' : `riêng cho ${AZ_LABEL[n.az]}`;
+      md.setLabelSub(sub);
+      md.setLabelState(n.state === 'failed' ? 'bad' : n.state === 'expanding' ? 'warn' : null);
     }
     const ext = this.node('external');
     ext.setLabelState(sim.extDown ? 'bad' : f.outFailRps > 0.01 ? 'warn' : null);
@@ -560,6 +597,8 @@ export class SandboxScene {
   }
 
   // an outside API call: server → (NAT Gateway) → Internet, or nowhere when there is no way out.
+  // While a Regional NAT Gateway is still expanding into the server's AZ, `way.via` is its
+  // presence in the other AZ, so the packet visibly crosses over there.
   // `down`: the provider itself is out, the call dies on arrival. Returns whether it worked.
   _outbound(fromKey, way, down = false) {
     const a = this._anchorOf(fromKey);
@@ -687,6 +726,18 @@ export class SandboxScene {
         if (seg) this.fx.packets.spawn([seg], { color: '#a3e635', size: restoring ? 1.1 : 0.8, speed: 10, onDone: restoring ? null : () => this.node('backup')?.pulse() });
       }
     }
+    // the miners talk to their mining pool; GuardDuty reads the logs that reveal them
+    if (this.sim.leak.active) {
+      this._leakAcc = (this._leakAcc || 0) + dt * this.speed * 1.5;
+      if (this._leakAcc >= 1) {
+        this._leakAcc = 0;
+        const i = Math.floor(Math.random() * 6);
+        const seg = this._seg('miner:' + i, 'external');
+        if (seg) this.fx.packets.spawn([seg], { color: '#f87171', size: 0.7, speed: 12 });
+        const log = this.node('guardduty') && this._seg('miner:' + i, 'guardduty');
+        if (log) this.fx.packets.spawn([log], { color: '#fca5a5', size: 0.6, speed: 10 });
+      }
+    }
     // synchronous replication stream primary → standby
     const db = this.sim.db;
     const p = db.find((n) => n.role === 'primary' && n.state === 'ok');
@@ -729,6 +780,7 @@ export class SandboxScene {
       for (const t of f.targets) {
         if (t.out && !t.out.ok && (f.outFailRps > 0 || f.awsFailRps > 0)) {
           if (t.out.via) say('nat:' + t.out.via, 'NAT hỏng · mất đường ra Internet', 'bad', 2.4);
+          else if (t.out.expanding) say('nat:' + t.out.expanding, 'Đang mở rộng · chưa ra Internet được', 'warn', 2.4);
           else if (!noWayOut) {
             noWayOut = true;
             say('ec2:' + t.id, 'Không có đường ra Internet', 'bad', 2.4);
@@ -775,8 +827,8 @@ export class SandboxScene {
         break;
       }
       case 'serverFail': {
-        if (!e.id) break;
-        const a = pos('ec2:' + e.id);
+        if (!e.instId) break;
+        const a = pos('ec2:' + e.instId);
         if (!a) break;
         this.fx.sparks(a, { n: 26, speed: 5 });
         this.fx.glowBurst(a, { color: '#ff6b3d', size: 4, life: 0.5 });
@@ -789,7 +841,7 @@ export class SandboxScene {
         this.sfx?.play('zap');
         break;
       case 'hcFail': {
-        const a = pos('ec2:' + e.id);
+        const a = pos('ec2:' + e.instId);
         if (!a) break;
         this.fx.ring({ x: a.x, y: AZ_Y, z: a.z }, { color: COLOR.bad, r0: 0.6, r1: 2.6, dur: 1 });
         this.fx.callout(new THREE.Vector3(a.x, a.y + 2.2, a.z), 'Health check ✗', { kind: 'warn' });
@@ -823,7 +875,7 @@ export class SandboxScene {
         break;
       }
       case 'dbFail': {
-        const n = this.sim.db.find((d) => d.id === e.id);
+        const n = this.sim.db.find((d) => d.id === e.dbId);
         const a = n && pos('rds:' + n.id);
         if (a) {
           this.fx.sparks(a, { n: 24, speed: 5 });
@@ -879,6 +931,15 @@ export class SandboxScene {
         this.sfx?.play('good');
         break;
       }
+      case 'natExpanded': {
+        const n = this.sim.nat.find((x) => x.az === e.az);
+        const a = n && pos('nat:' + n.id);
+        if (a) {
+          this.fx.ring({ x: a.x, y: AZ_Y, z: a.z }, { color: '#c4b5fd', r0: 0.5, r1: 3.5, dur: 1.2 });
+          this.fx.callout(new THREE.Vector3(a.x, a.y + 2.2, a.z), 'Đã có mặt ở AZ này ✓', { kind: 'good', dur: 2.4 });
+        }
+        break;
+      }
       case 'queueBacklog':
       case 'queueDrained': {
         const a = pos('sqs');
@@ -926,6 +987,36 @@ export class SandboxScene {
         const a = key && pos(key);
         if (a) this.fx.callout(new THREE.Vector3(a.x, a.y + 2.4, a.z), 'Không có backup · mất vĩnh viễn', { kind: 'bad', dur: 3.2 });
         this.sfx?.play('alarm');
+        break;
+      }
+      case 'leakedKey': {
+        const a = new THREE.Vector3(LAYOUT.miners.x, 0, LAYOUT.miners.z + 0.9);
+        this.fx.callout(new THREE.Vector3(a.x + LEAK_TEXT_DX, 2.8, a.z), 'Key bị lộ → máy đào coin!', { kind: 'bad', dur: 3.2, rise: 2 });
+        this.fx.glowBurst(a, { color: '#ef4444', size: 4, life: 0.6 });
+        this.sfx?.play('alert');
+        break;
+      }
+      case 'gdFinding': {
+        const m = this.node('guardduty');
+        const a = pos('guardduty');
+        if (m && a) {
+          m.flash('deny');
+          this.fx.callout(new THREE.Vector3(a.x + LEAK_TEXT_DX, a.y + 2.4, a.z), 'Finding: đào coin! → EventBridge', { kind: 'bad', dur: 3 });
+          this.fx.ring({ x: a.x, y: 0, z: a.z }, { color: '#f87171', r0: 1, r1: 6, dur: 1.2 });
+        }
+        this.sfx?.play('alarm');
+        break;
+      }
+      case 'leakContained':
+      case 'leakStopped': {
+        const a = pos('guardduty') || new THREE.Vector3(LAYOUT.miners.x, 0, LAYOUT.miners.z);
+        this.fx.callout(new THREE.Vector3(a.x + LEAK_TEXT_DX, a.y + 2.4, a.z), e.type === 'leakContained' ? 'Lambda: tắt key, dừng máy ✓' : 'Đã xoá máy đào', { kind: 'good', dur: 2.8 });
+        this.sfx?.play('good');
+        break;
+      }
+      case 'leakBilled': {
+        const a = new THREE.Vector3(LAYOUT.miners.x, 0, LAYOUT.miners.z);
+        this.fx.callout(new THREE.Vector3(a.x + LEAK_TEXT_DX, 2.8, a.z), 'Hoá đơn đang chạy: $400/giờ', { kind: 'warn', dur: 3 });
         break;
       }
       case 'budgetWarn':
@@ -1014,6 +1105,7 @@ export class SandboxScene {
       worker: [[L.worker[0], 0, 0], 14],
       vpce: [L.vpce, 12],
       backup: [[L.backup[0], 1, L.backup[2]], 12],
+      guardduty: [L.guardduty, 12],
       asg: [[L.asg.x, 0, L.asg.z], 30],
       nat: [[L.natX, 0, 0], 26],
       external: [L.external, 14],

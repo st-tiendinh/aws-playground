@@ -159,11 +159,15 @@ export function createEngine({ host, ui, simStore }) {
     }
   }
 
-  function loadService(id) {
+  // `step`: the `key` of the step to open at — a deep link such as the NAT Gateway part of the
+  // VPC lesson — otherwise the lesson starts from its first step
+  function loadService(id, { step } = {}) {
     const flow = FLOWS[id];
     if (!flow) return;
     ui.set({ serviceId: id, picked: null });
     explore.load(flow);
+    const at = step ? flow.steps.findIndex((s) => s.key === step) : -1;
+    if (at > 0) explore.goto(at, { cameraInstant: true });
     explore.setPlaying(true);
   }
 

@@ -1,11 +1,15 @@
 // Static checks for the explore flows: every service has a flow, every action names a known
-// action type and refers to nodes that exist on that flow's stage. usage: node test/flows.test.mjs
+// action type and refers to nodes that exist on that flow's stage, and every deep link (a 3D
+// object explained at one step of a lesson) lands on a real step. usage: node test/flows.test.mjs
 import { FLOWS } from '../src/data/flows.js';
-import { SERVICES } from '../src/data/services.js';
+import * as catalogue from '../src/data/services.js';
 
-const KINDS = new Set(['ec2', 'elb', 's3', 'rds', 'dynamodb', 'lambda', 'apigw', 'igw', 'nat', 'external', 'cloudfront', 'edge', 'route53', 'users', 'user', 'az', 'zone', 'region', 'outline', 'subnet', 'globe', 'token', 'cloudwatch', 'sqs', 'iam', 'sns', 'cache', 'waf', 'shield', 'ecs', 'secrets', 'cognito', 'ebs', 'snapshot', 'kms', 'cloudtrail', 'eventbridge', 'cloudformation', 'budgets', 'costexplorer', 'acm', 'stepfunctions', 'efs', 'mount', 'ecr', 'aurora', 'resp', 'vpce', 'eni', 'sg', 'nacl', 'org', 'account', 'ou', 'scp', 'kinesis', 'firehose', 'ssm', 'param', 'backup']);
+const { SERVICES } = catalogue;
+const SANDBOX_ACTIONS = new Set([null, 'quake', 'serverFail', 'spike', 'dbFail', 'ddos', 'sqlInjection', 'paymentDown', 'dataDelete', 'leakedKey']);
+
+const KINDS = new Set(['ec2', 'elb', 's3', 'rds', 'dynamodb', 'lambda', 'apigw', 'igw', 'nat', 'external', 'cloudfront', 'edge', 'route53', 'users', 'user', 'az', 'zone', 'region', 'outline', 'subnet', 'globe', 'token', 'cloudwatch', 'sqs', 'iam', 'sns', 'cache', 'waf', 'shield', 'ecs', 'secrets', 'cognito', 'ebs', 'snapshot', 'kms', 'cloudtrail', 'eventbridge', 'cloudformation', 'budgets', 'costexplorer', 'acm', 'stepfunctions', 'efs', 'mount', 'ecr', 'aurora', 'resp', 'vpce', 'eni', 'sg', 'nacl', 'org', 'account', 'ou', 'scp', 'kinesis', 'firehose', 'ssm', 'param', 'backup', 'idc', 'permset', 'guardduty', 'finding', 'config', 'rule', 'advisor', 'miner']);
 const ACTIONS = new Set(['packet', 'stream', 'pulse', 'callout', 'beam', 'break', 'fix', 'quake', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count', 'flash', 'focus', 'shake', 'sound']);
-const STEP_KEYS = new Set(['title', 'text', 'dur', 'cam', 'run', 'loop', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count']);
+const STEP_KEYS = new Set(['key', 'title', 'text', 'dur', 'cam', 'run', 'loop', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count']);
 
 const errors = [];
 const err = (where, msg) => errors.push(`${where}: ${msg}`);
@@ -39,6 +43,27 @@ for (const [id, flow] of Object.entries(FLOWS)) {
     checkActions(st.run, ids, where);
     checkActions(st.loop?.run, ids, where + ' loop');
   });
+  const keys = flow.steps.map((st) => st.key).filter((k) => k != null);
+  if (keys.some((k) => typeof k !== 'string' || !k)) err(id, 'step key must be a non-empty string');
+  if (new Set(keys).size !== keys.length) err(id, 'duplicate step keys');
+  if (!SERVICES.some((s) => s.id === id)) err(id, 'flow has no service');
+}
+
+// a 3D object explained inside a bigger lesson: [service id, step key]
+for (const [kind, [sid, key]] of Object.entries(catalogue.LESSON_FOR || {})) {
+  if (!KINDS.has(kind)) err(`LESSON_FOR.${kind}`, 'unknown model kind');
+  if (!FLOWS[sid]?.steps.some((st) => st.key === key)) err(`LESSON_FOR.${kind}`, `no step "${key}" in flow "${sid}"`);
+}
+
+// "try it in the sandbox": one suggestion, or a list of labelled ones
+for (const s of SERVICES) {
+  if (!s.sandbox) continue;
+  const list = Array.isArray(s.sandbox) ? s.sandbox : [s.sandbox];
+  for (const sb of list) {
+    if (!sb.preset && !sb.config) err(`${s.id}.sandbox`, 'needs a preset or a config');
+    if (!SANDBOX_ACTIONS.has(sb.action ?? null)) err(`${s.id}.sandbox`, `unknown action "${sb.action}"`);
+    if (Array.isArray(s.sandbox) && !sb.label) err(`${s.id}.sandbox`, 'each suggestion in a list needs a label');
+  }
 }
 
 if (errors.length) {

@@ -13,7 +13,8 @@ export function ServiceList({ onPick }) {
 
   const groups = useMemo(() => {
     const term = q.trim().toLowerCase();
-    const match = (s) => !term || [s.name, s.short, s.tagline, s.id].some((x) => x.toLowerCase().includes(term));
+    // `keywords`: parts taught inside a lesson (NAT Gateway, Security Group… in VPC) are found too
+    const match = (s) => !term || [s.name, s.short, s.tagline, s.id, ...(s.keywords || [])].some((x) => x.toLowerCase().includes(term));
     return ORDER.map((cat) => ({ cat, items: SERVICES.filter((s) => s.category === cat && match(s)) })).filter((g) => g.items.length);
   }, [q]);
 

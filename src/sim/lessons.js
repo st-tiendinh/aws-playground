@@ -1,6 +1,6 @@
 // Turns a finished scenario into a lesson card: a verdict, what helped, what hurt and
 // one-click suggestions that patch the architecture so the user can try again.
-import { ASG, AZ_LABEL, BACKUP, BUDGET, LAMBDA, OTHER_AZ, SQS } from './constants.js';
+import { ASG, AZ_LABEL, BACKUP, BUDGET, LAMBDA, LEAK, OTHER_AZ, SQS } from './constants.js';
 
 export const ACTION_TITLE = {
   quake: 'Động đất phá huỷ một AZ',
@@ -12,6 +12,7 @@ export const ACTION_TITLE = {
   sqlInjection: 'Tấn công SQL injection',
   paymentDown: 'Đối tác thanh toán sập',
   dataDelete: 'Xoá nhầm dữ liệu',
+  leakedKey: 'Lộ access key',
 };
 
 // what a private EC2 fleet without a NAT Gateway can no longer reach. Empty when nothing breaks:
@@ -111,6 +112,14 @@ export function evaluateLesson(sc) {
         const needs = natlessFailures(cfg);
         if (cfg.nat === 'perAz') {
           good(`Mỗi AZ có NAT Gateway riêng: EC2 ở ${AZ_LABEL[other]} vẫn gọi được API bên ngoài qua NAT của chính AZ đó.`);
+        } else if (cfg.nat === 'regional') {
+          // like a NAT in every AZ — as long as it was already present where the survivors run
+          if (sc.natWaited) {
+            bad(`Regional NAT Gateway chỉ có mặt ở AZ có EC2: trước sự cố ${AZ_LABEL[other]} chưa có máy nên NAT phải mở rộng sang (thực tế 15–20 phút, có khi tới 60 phút) — trong lúc chờ, EC2 mới ở ${AZ_LABEL[other]} không gọi được ${needs.join(', ')}.`);
+            if (cfg.asg && cfg.asgMin < 2) suggest('Tối thiểu 2 EC2 (đủ cả hai AZ)', { asgMin: 2, asgMax: Math.max(cfg.asgMax, 2) });
+          } else if (sc.natReady.includes(other)) {
+            good(`Regional NAT Gateway có mặt sẵn ở từng AZ có EC2: EC2 ở ${AZ_LABEL[other]} vẫn gọi được API bên ngoài qua phần NAT ở chính AZ đó.`);
+          }
         } else if (!needs.length) {
           good('NAT Gateway duy nhất có sự cố cũng không sao: EC2 không còn cần NAT — SQS gánh các lời gọi ra ngoài, VPC Endpoint nối tới S3 và SQS.');
         } else if (sc.natAz === az) {
@@ -271,7 +280,9 @@ export function evaluateLesson(sc) {
           suggest('Bật Auto Scaling', { asg: true, elb: true });
         }
         if (cfg.database === 'rds') info('RDS cũng tính tiền theo giờ, dù ban đêm ít truy vấn.');
-        if (cfg.nat !== 'none') info(`${cfg.nat === 'perAz' ? 'Hai' : 'Một'} NAT Gateway vẫn tính tiền theo giờ dù gần như không có traffic đi qua.`);
+        if (cfg.nat === 'regional') {
+          if (sc.natHoursMin > 0) info(`Regional NAT Gateway vẫn tính tiền theo giờ cho mỗi AZ nó có mặt (ở đây ${sc.natHoursMin} AZ có EC2), dù gần như không có traffic đi qua.`);
+        } else if (cfg.nat !== 'none') info(`${cfg.nat === 'perAz' ? 'Hai' : 'Một'} NAT Gateway vẫn tính tiền theo giờ dù gần như không có traffic đi qua.`);
         info('Với lượng truy cập thấp và thất thường, kiến trúc serverless (Lambda) thường rẻ hơn.');
       } else {
         good(`Serverless trả tiền theo request: chi phí giảm từ ${money(sc.costStart)} xuống khoảng ${money(sc.costMin)}/giờ.`);
@@ -344,6 +355,25 @@ export function evaluateLesson(sc) {
       break;
     }
 
+    case 'leakedKey': {
+      const loss = (h) => usd(h * LEAK.costPerHour);
+      if (sc.hadGuardDuty) {
+        good('GuardDuty đọc CloudTrail, VPC Flow Logs và DNS log (không cần cài agent): thấy access key được dùng từ IP lạ và máy mới gọi tới pool đào coin, ra finding sau vài phút.');
+        good(`EventBridge chuyển finding cho Lambda: vô hiệu hoá key, dừng máy đào. Ngoài thực tế máy chỉ chạy khoảng 15 phút — thiệt hại cỡ ${loss(LEAK.realHours.guardduty)}.`);
+      } else if (sc.hadBudget) {
+        bad(`Không có GuardDuty: chỉ AWS Budgets báo động, mà dữ liệu chi phí cập nhật chậm vài giờ. Tới lúc nhận email, máy đào đã chạy khoảng nửa ngày — mất cỡ ${loss(LEAK.realHours.budgets)}.`);
+        info('Budgets chỉ cảnh báo, không tự dừng máy đào — vẫn phải có người vào tìm và xoá. Budget action có thể áp SCP chặn tạo thêm tài nguyên, nhưng không thay được việc phát hiện mối đe doạ.');
+        suggest('Bật Amazon GuardDuty', { guardduty: true });
+      } else {
+        bad(`Không có GuardDuty lẫn AWS Budgets: chẳng ai hay biết cho tới khi nhận hoá đơn cuối tháng — máy đào có thể đã chạy hai tuần, tiền mất cỡ ${loss(LEAK.realHours.bill)}.`);
+        suggest('Bật Amazon GuardDuty', { guardduty: true });
+        suggest(`Đặt AWS Budgets ${usd(BUDGET.options[1])}/tháng`, { budget: BUDGET.options[1] });
+      }
+      info('Website vẫn chạy bình thường suốt sự cố — vì vậy đo sức khoẻ ứng dụng không bắt được kiểu tấn công này.');
+      info('Gốc rễ là access key dài hạn: người dùng nên đăng nhập qua IAM Identity Center (credential tạm, tự hết hạn), ứng dụng dùng IAM role. Bật MFA, không commit key vào Git.');
+      break;
+    }
+
     default:
       break;
   }
@@ -369,10 +399,14 @@ export function evaluateLesson(sc) {
   // the site keeps half working, but deleted data with no backup is gone for good
   const dataLost = sc.action === 'dataDelete' && flags.has('noBackup');
   if (dataLost) grade = 'fail';
+  // a leaked key never hurts the site: judged by how soon anyone noticed the miners
+  if (sc.action === 'leakedKey') grade = sc.hadGuardDuty ? 'pass' : sc.hadBudget ? 'partial' : 'fail';
 
   const headline = dataLost
     ? 'Dữ liệu đã mất vĩnh viễn!'
-    : sc.action === 'night'
+    : sc.action === 'leakedKey'
+      ? { pass: 'Chặn kịp trong vài phút!', partial: 'Phát hiện muộn — tiền đã mất', fail: 'Không ai phát hiện — hoá đơn khổng lồ!' }[grade]
+      : sc.action === 'night'
       ? grade === 'pass'
         ? 'Chi phí co giãn theo lượng truy cập'
         : 'Website ổn nhưng lãng phí tiền'
@@ -388,5 +422,70 @@ export function evaluateLesson(sc) {
     },
   ];
 
-  return { action: sc.action, az: sc.az || null, title: ACTION_TITLE[sc.action], grade, headline, stats, points, suggestions };
+  // the card's default badge for "partial" reads "had an outage"; these events never take the site down
+  const badge =
+    sc.action === 'leakedKey'
+      ? { pass: 'Chặn kịp', partial: 'Phát hiện muộn', fail: 'Không ai phát hiện' }[grade]
+      : sc.action === 'night' && grade === 'partial'
+        ? 'Lãng phí'
+        : null;
+
+  return { action: sc.action, az: sc.az || null, title: ACTION_TITLE[sc.action], grade, badge, headline, stats, points, suggestions };
+}
+
+// Well-Architected review of the sandbox architecture: each of the six pillars gets a few checks
+// (what the sandbox can model) and a score = share of checks passed. A failing check may carry a
+// patch that fixes it, like a Trusted Advisor recommendation.
+export const PILLARS = [
+  { id: 'ops', name: 'Vận hành xuất sắc', en: 'Operational Excellence' },
+  { id: 'sec', name: 'Bảo mật', en: 'Security' },
+  { id: 'rel', name: 'Độ tin cậy', en: 'Reliability' },
+  { id: 'perf', name: 'Hiệu năng', en: 'Performance Efficiency' },
+  { id: 'cost', name: 'Tối ưu chi phí', en: 'Cost Optimization' },
+  { id: 'sus', name: 'Bền vững', en: 'Sustainability' },
+];
+
+export function wellArchitected(c) {
+  const ec2 = c.compute === 'ec2';
+  const priv = ec2 && c.appSubnet === 'private';
+  const elastic = !ec2 || c.asg; // capacity follows demand
+  const checks = { ops: [], sec: [], rel: [], perf: [], cost: [], sus: [] };
+  const add = (p, ok, text, patch) => checks[p].push({ ok: !!ok, text, patch: ok ? null : patch || null });
+
+  add('ops', elastic, ec2 ? 'Auto Scaling tự thay máy hỏng (self-healing)' : 'Lambda: AWS tự lo máy chủ', { asg: true, elb: true });
+  add('ops', c.queue, 'Tách việc chậm ra hàng đợi (SQS) — lỗi đối tác không lan sang web', { queue: true });
+  add('ops', c.budget > 0, 'Có cảnh báo khi chi phí bất thường (AWS Budgets)', { budget: BUDGET.options[1] });
+
+  add('sec', c.guardduty, 'GuardDuty phát hiện mối đe doạ (key bị lộ, máy đào coin)', { guardduty: true });
+  add('sec', c.waf, 'WAF lọc request độc hại (SQL injection, XSS)', { waf: true });
+  add('sec', c.shield, 'Shield chống DDoS ở tầng mạng', { shield: true });
+  if (ec2) add('sec', priv, 'EC2 nằm trong private subnet, chỉ nhận traffic qua Load Balancer', { appSubnet: 'private', elb: true, nat: c.nat === 'none' ? 'perAz' : c.nat });
+
+  if (ec2) {
+    add('rel', c.asg || (c.ec2.a > 0 && c.ec2.b > 0), 'Máy chủ trải trên ít nhất 2 AZ', c.asg ? null : { ec2: { a: Math.max(1, c.ec2.a), b: Math.max(1, c.ec2.b) }, elb: true });
+    add('rel', c.elb, 'Load Balancer + health check bỏ qua máy hỏng', { elb: true });
+    if (priv && natlessFailures(c).length) add('rel', c.nat === 'perAz' || c.nat === 'regional', 'Đường ra Internet không phụ thuộc một AZ (NAT mỗi AZ / Regional)', { nat: 'perAz' });
+  }
+  if (c.database === 'rds') add('rel', c.rdsMultiAz, 'RDS Multi-AZ: có standby ở AZ khác', { rdsMultiAz: true });
+  if (c.database !== 'none' || ec2) add('rel', c.backup, 'Có bản sao lưu (AWS Backup) để khôi phục khi xoá nhầm', { backup: true });
+  add('rel', c.queue, 'Đơn hàng không mất khi đối tác thanh toán sập (SQS)', { queue: true });
+
+  add('perf', c.cloudfront, 'CloudFront cache nội dung gần người dùng', { cloudfront: true });
+  add('perf', c.s3, 'File tĩnh phục vụ từ S3, không chiếm sức server', { s3: true });
+  add('perf', elastic, 'Năng lực tự tăng theo lượng truy cập', { asg: true, elb: true });
+  if (c.database === 'rds') add('perf', c.cache, 'ElastiCache đỡ lượt đọc cho RDS', { cache: true });
+
+  add('cost', elastic, 'Tự giảm máy khi vắng khách — không trả tiền cho máy ngồi chơi', { asg: true, elb: true });
+  add('cost', c.budget > 0, 'Đặt ngân sách và cảnh báo (AWS Budgets)', { budget: BUDGET.options[1] });
+  if (priv && c.s3) add('cost', c.vpce, 'Traffic tới S3 đi qua VPC Endpoint miễn phí thay vì NAT tính theo GB', { vpce: true });
+
+  add('sus', elastic, 'Chỉ chạy đúng số máy cần, không để máy rảnh', { asg: true, elb: true });
+  add('sus', c.cloudfront || c.s3, 'Giảm dữ liệu truyền đi xa nhờ cache và lưu trữ managed', { s3: true, cloudfront: true });
+  add('sus', !ec2 || c.database === 'dynamodb', 'Dùng dịch vụ managed/serverless chia sẻ hạ tầng hiệu quả', null);
+
+  return PILLARS.map((p) => {
+    const list = checks[p.id];
+    const passed = list.filter((x) => x.ok).length;
+    return { ...p, checks: list, passed, total: list.length, score: list.length ? Math.round((passed / list.length) * 100) : 100 };
+  });
 }

@@ -164,6 +164,15 @@ const GLYPH = {
       <path d="M12 12.3v3.4" />
     </>
   ),
+  identitycenter: (
+    <>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 9V4M12 15v5M9.4 13.5L5 16M14.6 13.5L19 16M9.4 10.5L5 8M14.6 10.5L19 8" />
+      <circle cx="12" cy="3.5" r="1.2" />
+      <circle cx="4.5" cy="16.5" r="1.2" />
+      <circle cx="19.5" cy="16.5" r="1.2" />
+    </>
+  ),
   cognito: (
     <>
       <rect x="2.5" y="5" width="19" height="14" rx="2" />
@@ -205,6 +214,13 @@ const GLYPH = {
       <path d="M9.3 11.2l-1.8 1 4.5 2.6 4.5-7-1.7-1-3.3 5.1z" fill="currentColor" stroke="none" />
     </>
   ),
+  guardduty: (
+    <>
+      <path d="M12 3l7 3v5.5c0 4.3-3 7.8-7 9.5-4-1.7-7-5.2-7-9.5V6z" />
+      <circle cx="11.3" cy="11.3" r="2.8" />
+      <path d="M13.3 13.3l2.5 2.5" />
+    </>
+  ),
   cloudwatch: (
     <>
       <rect x="3" y="4" width="18" height="13" rx="2" />
@@ -217,6 +233,13 @@ const GLYPH = {
       <path d="M4 6h11M4 10h7M4 14h4.5" />
       <circle cx="15" cy="15" r="3.8" />
       <path d="M17.8 17.8l3 3" />
+    </>
+  ),
+  config: (
+    <>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7v5l3.2 2" />
+      <path d="M8.5 19.5l2 1.5 3-4" />
     </>
   ),
   cloudformation: (
@@ -235,6 +258,12 @@ const GLYPH = {
     <>
       <circle cx="12" cy="12" r="8.5" />
       <path d="M14.8 9.3c-.5-1-1.6-1.6-2.8-1.6-1.6 0-2.8.9-2.8 2.1 0 2.9 5.9 1.6 5.9 4.5 0 1.2-1.3 2.1-3 2.1-1.4 0-2.6-.6-3.1-1.7M12 6v1.7M12 16.4V18" />
+    </>
+  ),
+  trustedadvisor: (
+    <>
+      <path d="M12 2.5l7.5 3v5.5c0 4.6-3.2 8.3-7.5 10.5-4.3-2.2-7.5-5.9-7.5-10.5V5.5z" />
+      <path d="M8.5 12l2.5 2.5 4.5-5" />
     </>
   ),
   organizations: (
@@ -302,14 +331,16 @@ export function Glyph({ name, size = 18, stroke = 1.8 }) {
   );
 }
 
-const KIND_TO_SERVICE = { edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc' };
+// model kinds without a lesson of their own take the colour of the lesson that explains them
+const KIND_TO_SERVICE = { edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
 const SPECIAL = { users: ['#0ea5e9', 'users'], user: ['#0ea5e9', 'users'], external: ['#0891b2', 'foundation'] };
 
 export function ServiceIcon({ id, size = 34, glyph }) {
   const sid = KIND_TO_SERVICE[id] || id;
   const svc = serviceById(sid);
   const color = SPECIAL[id]?.[0] || (svc ? CATEGORIES[svc.category].color : '#64748b');
-  const g = glyph || SPECIAL[id]?.[1] || (GLYPH[sid] ? sid : 'foundation');
+  // a part with its own glyph (NAT Gateway, VPC Endpoint…) keeps it, coloured like its lesson
+  const g = glyph || SPECIAL[id]?.[1] || (GLYPH[id] ? id : GLYPH[sid] ? sid : 'foundation');
   return (
     <span className="svc-icon" style={{ '--c': color, width: size, height: size }}>
       <Glyph name={g} size={Math.round(size * 0.58)} />

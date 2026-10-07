@@ -1,5 +1,5 @@
 // Card for the 3D object the user clicked: what it is and, in the sandbox, its live state.
-import { CATEGORIES, OBJECT_INFO, serviceById, serviceForModel } from '../data/services.js';
+import { CATEGORIES, LESSON_FOR, OBJECT_INFO, serviceById, serviceForModel } from '../data/services.js';
 import { AZ_CODE, AZ_LABEL } from '../sim/constants.js';
 import { useApp, useSim, useUi } from '../state/store.js';
 import { fmtPct, fmtUsers, STATUS } from './format.js';
@@ -45,8 +45,17 @@ function live(p, snap, config) {
   } else if (p.kind === 'nat' && p.natId) {
     const n = snap.nat.find((x) => x.id === p.natId);
     if (!n) return null;
-    rows.push(['Vị trí', `public subnet · ${AZ_LABEL[n.az]}`], ['Tình trạng', n.state === 'ok' ? 'Hoạt động' : 'Hỏng (AZ sự cố)']);
-    rows.push(['Phục vụ', config.nat === 'single' ? 'EC2 ở cả 2 AZ' : `EC2 ở ${AZ_LABEL[n.az]}`]);
+    if (n.regional) {
+      // one Regional NAT Gateway for the VPC: this is its presence in one AZ
+      const via = snap.nat.find((x) => x !== n && x.state === 'ok');
+      rows.push(['Loại', 'Regional · một NAT cho cả VPC'], ['Phần ở', `${AZ_LABEL[n.az]} · không cần public subnet`]);
+      rows.push(['Tình trạng', n.state === 'ok' ? 'Hoạt động' : n.state === 'expanding' ? `Đang mở rộng sang AZ này (còn ${Math.ceil(n.remaining)} giây)` : 'Hỏng (AZ sự cố)']);
+      rows.push(['Phục vụ', n.state !== 'expanding' ? `EC2 ở ${AZ_LABEL[n.az]}` : via ? `chưa — EC2 ở ${AZ_LABEL[n.az]} tạm đi qua ${AZ_LABEL[via.az]}` : `chưa — EC2 ở ${AZ_LABEL[n.az]} chưa ra Internet được`]);
+      rows.push(['Tính phí', 'theo giờ cho mỗi AZ có mặt + theo GB']);
+    } else {
+      rows.push(['Vị trí', `public subnet · ${AZ_LABEL[n.az]}`], ['Tình trạng', n.state === 'ok' ? 'Hoạt động' : 'Hỏng (AZ sự cố)']);
+      rows.push(['Phục vụ', config.nat === 'single' ? 'EC2 ở cả 2 AZ' : `EC2 ở ${AZ_LABEL[n.az]}`]);
+    }
     if (snap.s3App.viaNat > 0.01) rows.push(['Traffic S3 qua NAT', `${Math.round(snap.s3App.viaNat)} /giây · tính phí theo GB`]);
   } else if (p.kind === 'external') {
     if (snap.extDown) rows.push(['Tình trạng', 'Đang sập — không phản hồi']);
@@ -67,16 +76,20 @@ export function PickCard() {
   const snap = useSim((s) => s.snap);
   const config = useSim((s) => s.config);
   if (!p) return null;
-  const svc = serviceById(KIND_SERVICE[p.kind]) || serviceForModel(p.kind);
+  // a part explained inside a bigger lesson (NAT Gateway, Security Group… → the VPC lesson):
+  // its own name and blurb, and the button opens that lesson at the matching step
+  const link = LESSON_FOR[p.kind];
+  const svc = serviceById(link?.[0] || KIND_SERVICE[p.kind]) || serviceForModel(p.kind);
   const info = OBJECT_INFO[p.kind];
+  const part = link && info;
   const rows = live(p, snap, config);
-  const title = p.kind === 'az' || p.kind === 'zone' || p.kind === 'users' || p.kind === 'user' || p.kind === 'token' ? p.title || info?.title : svc?.name || p.title;
-  const desc = svc && !['az', 'zone', 'globe'].includes(p.kind) ? svc.tagline + '. ' + svc.what.split('. ')[0] + '.' : info?.text || svc?.what.split('. ')[0];
+  const title = part ? info.title : p.kind === 'az' || p.kind === 'zone' || p.kind === 'users' || p.kind === 'user' || p.kind === 'token' ? p.title || info?.title : svc?.name || p.title;
+  const desc = part ? info.text : svc && !['az', 'zone', 'globe'].includes(p.kind) ? svc.tagline + '. ' + svc.what.split('. ')[0] + '.' : info?.text || svc?.what.split('. ')[0];
 
   return (
     <aside className="pick-card" aria-live="polite">
       <header>
-        <ServiceIcon id={p.kind === 'users' || p.kind === 'user' ? 'users' : svc?.id || p.kind} size={36} />
+        <ServiceIcon id={p.kind === 'users' || p.kind === 'user' ? 'users' : part ? p.kind : svc?.id || p.kind} size={36} />
         <div>
           {svc && (
             <span className="chip" style={{ '--c': CATEGORIES[svc.category].color }}>
@@ -101,15 +114,15 @@ export function PickCard() {
           ))}
         </dl>
       )}
-      {svc && (p.mode === 'sandbox' || ui.get().serviceId !== svc.id) && (
+      {svc && (p.mode === 'sandbox' || ui.get().serviceId !== svc.id || link) && (
         <button
           className="btn btn-small"
           onClick={() => {
             engine.setMode('explore');
-            engine.explore.load(svc.id);
+            engine.explore.load(svc.id, { step: link?.[1] });
           }}
         >
-          Xem {svc.short} hoạt động thế nào
+          {link ? `Xem ${info?.title || p.title} trong bài ${svc.short}` : `Xem ${svc.short} hoạt động thế nào`}
           <Icon name="arrowRight" size={15} />
         </button>
       )}

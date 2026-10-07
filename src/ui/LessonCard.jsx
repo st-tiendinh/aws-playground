@@ -44,7 +44,7 @@ export function LessonCard() {
         <header>
           <span className="grade">
             <Icon name={g.icon} size={18} />
-            {g.text}
+            {lesson.badge || g.text}
           </span>
           <small>Kết quả: {lesson.title}</small>
           <h2 id="lesson-title">{lesson.headline}</h2>

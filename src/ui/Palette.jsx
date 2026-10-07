@@ -1,9 +1,10 @@
 // Sandbox, left panel: ready-made architectures and the component toggles. Hovering a row
 // highlights the matching 3D model; warnings explain weak spots of the current design.
-import { CATEGORIES, serviceById } from '../data/services.js';
+import { CATEGORIES, LESSON_FOR, serviceById } from '../data/services.js';
 import { EC2, ASG, BUDGET } from '../sim/constants.js';
-import { natlessFailures } from '../sim/lessons.js';
+import { natlessFailures, wellArchitected } from '../sim/lessons.js';
 import { PRESETS } from '../sim/presets.js';
+import { useState } from 'react';
 import { useApp, useSim } from '../state/store.js';
 import { Icon, ServiceIcon } from './icons.jsx';
 
@@ -31,7 +32,9 @@ function Stepper({ value, min, max, onChange, label }) {
 
 function Row({ id, sid, title, desc, children, hoverKey }) {
   const { engine, ui } = useApp();
-  const svc = serviceById(sid || id);
+  // a component explained inside a bigger lesson (NAT Gateway → the VPC lesson) opens at its step
+  const [lessonId, step] = LESSON_FOR[sid || id] || [sid || id];
+  const svc = serviceById(lessonId);
   return (
     <div
       className="comp-row"
@@ -48,11 +51,11 @@ function Row({ id, sid, title, desc, children, hoverKey }) {
       {svc && (
         <button
           className="icon-btn tiny"
-          title={`Xem ${svc.short} hoạt động thế nào`}
-          aria-label={`Tìm hiểu ${svc.short}`}
+          title={step ? `Xem ${title} trong bài ${svc.short}` : `Xem ${svc.short} hoạt động thế nào`}
+          aria-label={`Tìm hiểu ${step ? title : svc.short}`}
           onClick={() => {
             engine.setMode('explore');
-            engine.explore.load(svc.id);
+            engine.explore.load(svc.id, { step });
             ui.set({ picked: null });
           }}
         >
@@ -85,8 +88,51 @@ function warnings(c) {
   if (!c.shield) w.push('Chưa bật AWS Shield: một đợt DDoS có thể chiếm hết công suất, chen cả người dùng thật ra ngoài.');
   if (c.database === 'rds' && !c.waf) w.push('Chưa bật AWS WAF: request chứa mã SQL độc hại có thể đi thẳng tới RDS.');
   if (!c.backup && (c.database !== 'none' || ec2)) w.push('Chưa có AWS Backup: lỡ xoá nhầm dữ liệu là mất luôn — Multi-AZ cũng không cứu được trường hợp này.');
+  if (!c.guardduty) w.push('Chưa bật GuardDuty: access key bị lộ có thể bị dùng để đào coin hàng giờ mà không ai hay.');
   if (!c.budget) w.push('Chưa đặt AWS Budgets: chi phí tăng vọt (ví dụ khi 1 triệu người ùa vào) chỉ lộ ra khi nhận hoá đơn.');
   return w;
+}
+
+// six-pillar score of the current design; a failing check can be fixed in one click
+function WellArchitected({ c, set }) {
+  const [open, setOpen] = useState(null);
+  const pillars = wellArchitected(c);
+  const total = Math.round(pillars.reduce((n, p) => n + p.score, 0) / pillars.length);
+  return (
+    <section className="wa">
+      <h3>
+        <Icon name="target" size={16} /> Chấm điểm Well-Architected <b className="wa-total">{total}</b>
+      </h3>
+      {pillars.map((p) => (
+        <div key={p.id} className={`wa-pillar${open === p.id ? ' is-open' : ''}`}>
+          <button className="wa-row" onClick={() => setOpen(open === p.id ? null : p.id)} title={p.en} aria-expanded={open === p.id}>
+            <span className="wa-name">{p.name}</span>
+            <span className="wa-bar">
+              <i style={{ width: p.score + '%' }} className={p.score >= 80 ? 'good' : p.score >= 50 ? 'warn' : 'bad'} />
+            </span>
+            <small>
+              {p.passed}/{p.total}
+            </small>
+          </button>
+          {open === p.id && (
+            <ul className="wa-checks">
+              {p.checks.map((x) => (
+                <li key={x.text} className={x.ok ? 'ok' : 'miss'}>
+                  <Icon name={x.ok ? 'check' : 'x'} size={13} />
+                  <span>{x.text}</span>
+                  {x.patch && (
+                    <button className="chip-btn" onClick={() => set(x.patch)}>
+                      Sửa
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+    </section>
+  );
 }
 
 export function Palette() {
@@ -132,6 +178,9 @@ export function Palette() {
       </Row>
       <Row id="shield" sid="shield" title="AWS Shield" desc="chặn tấn công DDoS ở tầng mạng">
         <Toggle on={c.shield} onChange={(v) => set({ shield: v })} label="AWS Shield" />
+      </Row>
+      <Row id="guardduty" sid="guardduty" title="Amazon GuardDuty" desc="phát hiện key bị lộ, máy đào coin">
+        <Toggle on={c.guardduty} onChange={(v) => set({ guardduty: v })} label="Amazon GuardDuty" />
       </Row>
 
       <h3 className="group-title" style={{ '--c': CATEGORIES.compute.color }}>
@@ -189,13 +238,14 @@ export function Palette() {
           {priv && (
             <>
               <Row id="nat" title="NAT Gateway" desc="cho EC2 private gọi ra Internet" />
-              <div className="seg three" role="radiogroup" aria-label="NAT Gateway">
+              <div className="seg four" role="radiogroup" aria-label="NAT Gateway">
                 {[
-                  ['none', 'Không'],
-                  ['single', '1 cái'],
-                  ['perAz', 'Mỗi AZ'],
-                ].map(([v, t]) => (
-                  <button key={v} role="radio" aria-checked={c.nat === v} className={c.nat === v ? 'is-on' : ''} onClick={() => set({ nat: v })} onMouseEnter={() => engine.sandbox.highlight('nat')} onMouseLeave={() => engine.sandbox.highlight(null)}>
+                  ['none', 'Không', 'Không có NAT: EC2 private không gọi ra Internet được'],
+                  ['single', '1 cái', 'Một NAT Gateway ở AZ A dùng chung cho cả 2 AZ'],
+                  ['perAz', 'Mỗi AZ', 'Mỗi AZ một NAT Gateway riêng'],
+                  ['regional', 'Regional', 'Regional NAT Gateway: một NAT cho cả VPC, tự có mặt ở từng AZ có EC2, không cần public subnet'],
+                ].map(([v, t, tip]) => (
+                  <button key={v} role="radio" aria-checked={c.nat === v} className={c.nat === v ? 'is-on' : ''} title={tip} onClick={() => set({ nat: v })} onMouseEnter={() => engine.sandbox.highlight('nat')} onMouseLeave={() => engine.sandbox.highlight(null)}>
                     {t}
                   </button>
                 ))}
@@ -267,6 +317,8 @@ export function Palette() {
           </button>
         ))}
       </div>
+
+      <WellArchitected c={c} set={set} />
 
       {warn.length > 0 && (
         <div className="warnings">

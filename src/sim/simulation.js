@@ -20,7 +20,9 @@ import {
   ELB,
   EXT,
   HEALTH,
+  GUARDDUTY,
   LAMBDA,
+  LEAK,
   NAT,
   NIGHT_HOLD,
   OTHER_AZ,
@@ -54,7 +56,7 @@ export const DEFAULT_CONFIG = {
   asgMax: ASG.max,
   ec2: { a: 1, b: 0 }, // fixed instance count per AZ when Auto Scaling is off
   appSubnet: 'public', // 'public' | 'private' — where the EC2 fleet lives
-  nat: 'none', // 'none' | 'single' | 'perAz' — NAT Gateways for a private fleet
+  nat: 'none', // 'none' | 'single' | 'perAz' | 'regional' — NAT Gateways for a private fleet
   database: 'none', // 'none' | 'rds' | 'dynamodb'
   rdsMultiAz: false,
   cache: false, // ElastiCache in front of RDS
@@ -64,6 +66,7 @@ export const DEFAULT_CONFIG = {
   queue: false, // SQS + Lambda worker: orders are queued and processed in the background
   vpce: false, // VPC Endpoints: a private fleet reaches S3 (Gateway) and SQS (Interface) without NAT
   backup: false, // AWS Backup: daily backups + point-in-time recovery of the data store
+  guardduty: false, // Amazon GuardDuty: threat detection on CloudTrail, VPC Flow Logs and DNS logs
 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -87,7 +90,7 @@ export function normalizeConfig(c = {}) {
   const out = { ...DEFAULT_CONFIG, ...c, ec2: { ...DEFAULT_CONFIG.ec2, ...(c.ec2 || {}) } };
   out.compute = out.compute === 'lambda' ? 'lambda' : 'ec2';
   out.database = out.database === 'rds' || out.database === 'dynamodb' ? out.database : 'none';
-  for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz', 'cache', 'waf', 'shield', 'queue', 'vpce', 'backup']) out[k] = !!out[k];
+  for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz', 'cache', 'waf', 'shield', 'queue', 'vpce', 'backup', 'guardduty']) out[k] = !!out[k];
   for (const az of AZ_IDS) out.ec2[az] = clamp(Math.round(out.ec2[az] || 0), 0, EC2.maxPerAz);
   if (out.compute === 'ec2' && !out.asg && out.ec2.a + out.ec2.b === 0) out.ec2.a = 1;
   out.budget = BUDGET.options.includes(Number(out.budget)) ? Number(out.budget) : 0;
@@ -104,7 +107,7 @@ export function normalizeConfig(c = {}) {
   // servers in a private subnet are only reachable through a load balancer, and a NAT
   // Gateway only makes sense for a private fleet
   out.appSubnet = out.appSubnet === 'private' && out.compute === 'ec2' && out.elb ? 'private' : 'public';
-  out.nat = out.appSubnet === 'private' && (out.nat === 'single' || out.nat === 'perAz') ? out.nat : 'none';
+  out.nat = out.appSubnet === 'private' && ['single', 'perAz', 'regional'].includes(out.nat) ? out.nat : 'none';
   // a public fleet reaches S3 and SQS directly: VPC Endpoints only matter for a private one
   if (out.appSubnet !== 'private') out.vpce = false;
   return out;
@@ -123,6 +126,7 @@ const NAMES = {
   queue: 'SQS + Lambda worker',
   vpce: 'VPC Endpoint (S3, SQS)',
   backup: 'AWS Backup',
+  guardduty: 'Amazon GuardDuty',
 };
 
 const instName = (i) => `EC2 #${i.n}`;
@@ -207,6 +211,8 @@ export class Simulation {
         return this._paymentDown();
       case 'dataDelete':
         return this._dataDelete();
+      case 'leakedKey':
+        return this._leakedKey();
       case 'repair':
         return this._repair();
       default:
@@ -247,7 +253,7 @@ export class Simulation {
       lambda: { conc: this.lambda.conc, limit: LAMBDA.limit, coldFrac: this.lambda.coldFrac },
       db: this.db.map((n) => ({ id: n.id, az: n.az, role: n.role, state: n.state, load: n.load })),
       fleet: ins.map((i) => ({ id: i.id, n: i.n, az: i.az, state: i.state, cpu: i.cpu, registered: i.registered })),
-      nat: this.nat.map((n) => ({ id: n.id, az: n.az, state: n.state })),
+      nat: this.nat.map((n) => ({ id: n.id, az: n.az, state: n.state, regional: !!n.regional, remaining: n.state === 'expanding' ? Math.max(0, n.timer) : 0 })),
       outbound: { rps: this.flows.outRps || 0, failing: this.flows.outFailRps || 0 },
       totals: { ...this.totals },
       cfHit: this.flows.cfHit,
@@ -258,6 +264,7 @@ export class Simulation {
       sqliFail: this.flows.sqliFail,
       queue: this.config.queue ? { depth: this.queue.depth, inRate: this.flows.queueIn, outRate: this.flows.queueOut } : null,
       extDown: this.extDown,
+      leak: { active: this.leak.active, detected: this.leak.detected, seen: this.t - this.leak.start >= LEAK.billingLag },
       data: { wiped: this.data.wiped, restoring: this.data.restoring, remaining: this.data.restoring ? Math.max(0, this.data.timer) : 0, lost: this.data.lost },
       s3App: { rps: this.flows.s3AppRps, viaNat: this.flows.s3NatRps, viaEndpoint: this.flows.s3VpceRps, failing: this.flows.awsFailRps },
       scenario: sc ? { action: sc.action, az: sc.az, remaining: Math.max(0, sc.end - this.t) } : null,
@@ -288,6 +295,7 @@ export class Simulation {
     this.extDown = false; // the payment provider / email API is down
     this.queue = { depth: 0, warned: false }; // SQS backlog: messages waiting for the worker
     this.data = { wiped: false, restoring: false, timer: 0, lost: false, hadBackup: false };
+    this.leak = { active: false, detected: false, start: -100 }; // crypto miners running on a leaked access key
     this.asgDesired = 0;
     this._overSince = null;
     this._lastScaleIn = -100;
@@ -390,11 +398,21 @@ export class Simulation {
       if (!c.rdsMultiAz && standby) this.db = this.db.filter((n) => n !== standby);
     }
 
-    // NAT Gateways: one in AZ A for the whole VPC, or one per AZ
-    const natAzs = c.nat === 'perAz' ? AZ_IDS : c.nat === 'single' ? [this.nat[0]?.az || (this.az.a === 'ok' ? 'a' : 'b')] : [];
-    this.nat = this.nat.filter((n) => natAzs.includes(n.az));
-    for (const az of natAzs) {
-      if (!this.nat.some((n) => n.az === az) && this.az[az] === 'ok') this.nat.push({ id: `nat-${az}`, az, state: 'ok' });
+    // NAT Gateways: one in AZ A for the whole VPC, one per AZ, or one Regional NAT Gateway.
+    // Switching to the Regional one starts it out ready in every AZ that runs servers; from
+    // then on _regionalNat follows the fleet each step
+    if (c.nat === 'regional') {
+      if (!prev || prev.nat !== 'regional') {
+        this.nat = [];
+        this._regionalNat(0, true);
+      }
+    } else {
+      const zonal = this.nat.filter((n) => !n.regional);
+      const natAzs = c.nat === 'perAz' ? AZ_IDS : c.nat === 'single' ? [zonal[0]?.az || (this.az.a === 'ok' ? 'a' : 'b')] : [];
+      this.nat = zonal.filter((n) => natAzs.includes(n.az));
+      for (const az of natAzs) {
+        if (!this.nat.some((n) => n.az === az) && this.az[az] === 'ok') this.nat.push({ id: `nat-${az}`, az, state: 'ok' });
+      }
     }
 
     // CloudFront starts with an empty cache when it is switched on mid-run
@@ -406,9 +424,57 @@ export class Simulation {
   // how an instance reaches the Internet for its outside API calls
   _wayOut(inst) {
     if (this.config.appSubnet !== 'private') return { ok: true, via: null };
-    const n = this.config.nat === 'perAz' ? this.nat.find((x) => x.az === inst.az) : this.nat[0];
+    const n = this.config.nat === 'single' ? this.nat[0] : this.nat.find((x) => x.az === inst.az);
     if (!n) return { ok: false, via: null };
+    // a Regional NAT Gateway still expanding into this AZ: the traffic crosses to its presence
+    // in another AZ, or has no way out while there is none ready
+    if (n.state === 'expanding') {
+      const other = this.nat.find((x) => x !== n && x.state === 'ok' && this.az[x.az] === 'ok');
+      return other ? { ok: true, via: other.id, cross: true } : { ok: false, via: null, expanding: n.id };
+    }
     return { ok: n.state === 'ok' && this.az[n.az] === 'ok', via: n.id };
+  }
+
+  // Regional NAT Gateway: one gateway for the VPC, present in every healthy AZ that runs app
+  // servers. Joining a new AZ takes NAT.regionalExpandTime; it leaves an AZ with no servers
+  // left. A destroyed AZ keeps its lost presence until the repair. `instant`: presences created
+  // along with the gateway itself are ready at once.
+  _regionalNat(dt, instant = false) {
+    if (this.config.nat !== 'regional') return;
+    for (const az of AZ_IDS) {
+      if (this.az[az] !== 'ok') continue;
+      let n = this.nat.find((x) => x.az === az);
+      const used = this.instances.some((i) => i.az === az && i.state !== 'terminating');
+      if (n && !used) {
+        this.nat = this.nat.filter((x) => x !== n);
+        this._emit('natContract', 'info', `Không còn EC2 ở ${AZ_LABEL[az]} → Regional NAT Gateway rút khỏi AZ đó, bớt một giờ NAT phải trả.`, { az });
+      } else if (!n && used) {
+        n = { id: `nat-${az}`, az, state: instant ? 'ok' : 'expanding', timer: instant ? 0 : NAT.regionalExpandTime, regional: true };
+        this.nat.push(n);
+        if (instant) continue;
+        const via = this.nat.find((x) => x !== n && x.state === 'ok' && this.az[x.az] === 'ok');
+        this._emit(
+          'natExpand',
+          via || !natlessFailures(this.config).length ? 'info' : 'warn',
+          via
+            ? `Regional NAT Gateway đang mở rộng sang ${AZ_LABEL[az]} (thực tế thường 15–20 phút) — trong lúc chờ, EC2 ở ${AZ_LABEL[az]} ra Internet nhờ qua ${AZ_LABEL[via.az]}.`
+            : `Regional NAT Gateway đang mở rộng sang ${AZ_LABEL[az]} (thực tế thường 15–20 phút) — chưa AZ nào có NAT sẵn để đi nhờ, EC2 ở ${AZ_LABEL[az]} tạm chưa ra Internet được.`,
+          { az },
+        );
+      } else if (n && n.state === 'expanding') {
+        n.timer -= dt;
+        if (n.timer > 1e-9) continue;
+        n.state = 'ok';
+        n.timer = 0;
+        this._emit('natExpanded', 'success', `Regional NAT Gateway đã có mặt ở ${AZ_LABEL[az]}: EC2 ở đó ra Internet ngay trong AZ của mình.`, { az });
+      }
+    }
+  }
+
+  // NAT Gateway-hours billed right now: every zonal gateway, or each AZ a Regional NAT Gateway
+  // is present in (ready or still expanding)
+  _natHours() {
+    return this.config.nat === 'regional' ? this.nat.filter((n) => n.state !== 'failed').length : this.nat.length;
   }
 
   _announceConfig(prev, next) {
@@ -438,7 +504,12 @@ export class Simulation {
       );
     }
     if (prev.nat !== next.nat) {
-      const label = { none: 'không dùng NAT Gateway', single: '1 NAT Gateway (ở AZ A) dùng chung', perAz: 'mỗi AZ một NAT Gateway' };
+      const label = {
+        none: 'không dùng NAT Gateway',
+        single: '1 NAT Gateway (ở AZ A) dùng chung',
+        perAz: 'mỗi AZ một NAT Gateway',
+        regional: 'Regional NAT Gateway — một NAT cho cả VPC, tự có mặt ở từng AZ có EC2',
+      };
       this._emit('config', 'info', `Đường ra Internet của EC2: ${label[next.nat]}.`);
     }
     // what a private fleet without NAT can no longer reach — re-announced when that changes
@@ -559,7 +630,9 @@ export class Simulation {
   }
 
   _emit(type, level, text, extra = {}) {
-    const e = { id: ++this._eventSeq, t: this.t, type, level, text, ...extra };
+    // `extra` adds details (az, instId, dbId…) but never overrides the event's own fields: `id`
+    // keys the event log, so it must stay unique
+    const e = { ...extra, id: ++this._eventSeq, t: this.t, type, level, text };
     this.events.push(e);
     if (this.events.length > 160) this.events.shift();
     if (this.scenario) this.scenario.flags.add(type);
@@ -595,6 +668,7 @@ export class Simulation {
         this._autoscale();
       }
     }
+    this._regionalNat(dt);
     this._route(dt);
     this._metrics(dt);
     this._trackScenario(dt);
@@ -714,14 +788,14 @@ export class Simulation {
             'hcFail',
             'warn',
             `ELB health check: ${instName(i)} không phản hồi ${HEALTH.unhealthyThreshold} lần liên tiếp → ngừng gửi traffic tới máy này.`,
-            { id: i.id, az: i.az },
+            { instId: i.id, az: i.az },
           );
         } else if (!c.asg) {
           this._emit(
             'hcFail',
             'warn',
             `${instName(i)} không phản hồi. Không có Auto Scaling nên máy này nằm đó chờ quản trị viên xử lý.`,
-            { id: i.id, az: i.az },
+            { instId: i.id, az: i.az },
           );
         }
       } else if (i.state === 'running' && c.elb && !i.registered) {
@@ -797,7 +871,7 @@ export class Simulation {
           this._rebalancing
             ? `Cân bằng AZ: tắt ${instName(victim)} ở ${AZ_LABEL[victim.az]}.`
             : `Tải giảm → Auto Scaling tắt ${instName(victim)} để tiết kiệm chi phí (còn ${active.length - 1} EC2).`,
-          { id: victim.id },
+          { instId: victim.id },
         );
       }
       return;
@@ -1159,13 +1233,17 @@ export class Simulation {
       s3: c.s3 ? S3.storagePerHour + perHour(r.s3) * S3.costPerMillion : 0,
       cloudfront: c.cloudfront ? perHour(f.rps) * CF.costPerMillion : 0,
       route53: c.route53 ? R53.costPerHour + perHour(f.rps * R53.queryRatio) * R53.costPerMillion : 0,
-      // hourly per gateway + per GB processed: outside API calls, SQS messages and S3 files
-      nat: this.nat.length * NAT.costPerHour + gbPerHour((r.natRps + r.enqNatRps) * NAT.kbPerCall + r.s3NatRps * S3APP.kbPerCall) * NAT.costPerGB,
+      // hourly per gateway (Regional: per AZ it is in) + per GB processed: outside API calls,
+      // SQS messages and S3 files
+      nat: this._natHours() * NAT.costPerHour + gbPerHour((r.natRps + r.enqNatRps) * NAT.kbPerCall + r.s3NatRps * S3APP.kbPerCall) * NAT.costPerGB,
       // the S3 Gateway Endpoint is free; the SQS Interface Endpoint is billed per AZ-hour and per GB
       vpce: c.vpce && c.queue ? AZ_IDS.length * VPCE.ifaceCostPerHour + gbPerHour(r.enqRps * NAT.kbPerCall) * VPCE.costPerGB : 0,
       // SQS requests (send, receive, delete) + the Lambda worker invocations (batches of messages)
       sqs: c.queue ? perHour(r.enqRps * SQS.callsPerMsg) * SQS.costPerMillion + perHour(r.deqRps / SQS.batch) * LAMBDA.costPerMillion : 0,
       backup: c.backup ? BACKUP.costPerHour : 0,
+      guardduty: c.guardduty ? GUARDDUTY.costPerHour : 0,
+      // GPU miners someone else launched with the leaked key — your bill all the same
+      leak: this.leak.active ? LEAK.costPerHour : 0,
       waf: c.waf ? WAF.costPerHour + perHour(f.rps) * WAF.costPerMillion : 0,
       // Shield Standard is free — only Shield Advanced costs money, not modelled here
     };
@@ -1185,7 +1263,9 @@ export class Simulation {
   // when it crosses 80% / 100% of the budget, like a forecasted-spend budget alert
   _budgets(dt) {
     const b = this.budget;
-    const monthly = this.metrics.cost * BUDGET.hoursPerMonth;
+    // billing data lags by hours: the miners' spend reaches the forecast only after `billingLag`
+    const unseen = this.leak.active && this.t - this.leak.start < LEAK.billingLag ? LEAK.costPerHour : 0;
+    const monthly = (this.metrics.cost - unseen) * BUDGET.hoursPerMonth;
     b.forecast = this.history.length ? b.forecast + (monthly - b.forecast) * (1 - Math.exp(-dt / BUDGET.smoothing)) : monthly;
     const amount = this.config.budget;
     // judged from the first step on, so an alert never comes before the architecture is up
@@ -1242,6 +1322,19 @@ export class Simulation {
         this._emit('natLost', 'error', `NAT Gateway duy nhất (ở ${AZ_LABEL[az]}) mất kết nối → EC2 ở ${other} cũng không gọi được ${lost.join(', ')}.`, { az });
       } else if (this.config.nat === 'single') {
         this._emit('natLost', 'info', `NAT Gateway duy nhất (ở ${AZ_LABEL[az]}) mất theo AZ — nhưng EC2 không còn cần NAT nhờ SQS + VPC Endpoint.`, { az });
+      } else if (this.config.nat === 'regional') {
+        // the gateway lives on in the other AZ only if it is already present (and ready) there
+        const rest = this.nat.find((x) => x.az !== az && x.state !== 'failed');
+        const head = `Regional NAT Gateway mất phần ở ${AZ_LABEL[az]} theo AZ`;
+        if (!rest) {
+          this._emit('natLost', 'info', this.az[OTHER_AZ[az]] === 'ok' ? `${head}; ${other} chưa có EC2 nên NAT cũng chưa có mặt ở đó.` : `${head}.`, { az });
+        } else if (rest.state === 'ok') {
+          this._emit('natLost', 'info', `${head} — EC2 ở ${other} vẫn ra Internet qua phần NAT ở chính AZ đó.`, { az });
+        } else if (lost.length) {
+          this._emit('natLost', 'error', `${head} khi còn đang mở rộng sang ${other} → EC2 ở ${other} tạm không gọi được ${lost.join(', ')} cho tới khi mở rộng xong.`, { az });
+        } else {
+          this._emit('natLost', 'info', `${head} — nhưng EC2 không còn cần NAT nhờ SQS + VPC Endpoint.`, { az });
+        }
       } else {
         this._emit('natLost', 'info', `NAT Gateway ở ${AZ_LABEL[az]} mất theo AZ — EC2 ở ${other} vẫn ra Internet qua NAT của chính AZ đó.`, { az });
       }
@@ -1278,7 +1371,7 @@ export class Simulation {
     sc.victimAz = victim.az;
     this._failInstance(victim, 'hardware');
     this._emit('serverFail', 'error', `${instName(victim)} ở ${AZ_LABEL[victim.az]} hỏng phần cứng (cháy nguồn, hỏng ổ đĩa…)!`, {
-      id: victim.id,
+      instId: victim.id,
       az: victim.az,
     });
     return true;
@@ -1322,7 +1415,7 @@ export class Simulation {
       return false;
     }
     this._startScenario('dbFail', { dbAz: p.az });
-    this._emit('dbFail', 'error', `Ổ đĩa của database primary (RDS ở ${AZ_LABEL[p.az]}) bị hỏng!`, { az: p.az, id: p.id });
+    this._emit('dbFail', 'error', `Ổ đĩa của database primary (RDS ở ${AZ_LABEL[p.az]}) bị hỏng!`, { az: p.az, dbId: p.id });
     this._failDb(p, 'hardware');
     return true;
   }
@@ -1494,6 +1587,55 @@ export class Simulation {
     return true;
   }
 
+  // a long-term access key leaks (pushed to a public Git repo): within minutes someone launches GPU
+  // crypto miners with it. The website itself keeps working — only the bill grows. GuardDuty
+  // spots it and an EventBridge rule + Lambda shuts it down; without it, AWS Budgets notices only
+  // once the billing data catches up, and Budgets only warns, it does not stop anything.
+  _leakedKey() {
+    const c = this.config;
+    if (this.leak.active) {
+      this._emit('noop', 'warn', 'Các máy đào coin vẫn đang chạy bằng access key bị lộ.');
+      return false;
+    }
+    this._startScenario('leakedKey', { hadGuardDuty: c.guardduty, hadBudget: c.budget > 0 });
+    this.leak = { active: true, detected: false, start: this.t };
+    this._emit('leakedKey', 'error', 'Một access key dài hạn của IAM user bị đẩy lên GitHub công khai. Vài phút sau, kẻ gian dùng nó tạo hàng loạt máy GPU đào coin ở Region khác!');
+    if (c.guardduty) {
+      this._schedule(
+        LEAK.gdDetect,
+        () => {
+          this.leak.detected = true;
+          this._emit('gdFinding', 'error', 'GuardDuty: finding mức High — access key được dùng từ IP lạ, EC2 mới liên lạc với pool đào Bitcoin (CryptoCurrency:EC2/BitcoinTool.B!DNS). EventBridge chuyển finding cho Lambda xử lý.');
+          this._schedule(
+            LEAK.gdRespond,
+            () => {
+              this.leak.active = false;
+              this._emit('leakContained', 'success', 'Lambda đã vô hiệu hoá access key bị lộ và dừng các máy đào coin. Thiệt hại chỉ tính bằng phút.');
+            },
+            'leak',
+          );
+        },
+        'leak',
+      );
+    } else {
+      this._schedule(
+        LEAK.billingLag,
+        () => {
+          if (!this.leak.active) return;
+          this._emit(
+            'leakBilled',
+            'warn',
+            c.budget
+              ? 'Dữ liệu chi phí vừa cập nhật (thực tế: sau vài giờ) — khoản chi của máy đào coin hiện ra trong AWS Budgets.'
+              : 'Dữ liệu chi phí đã cập nhật, nhưng không có AWS Budgets nên chẳng ai được báo. Máy đào coin vẫn chạy…',
+          );
+        },
+        'leak',
+      );
+    }
+    return true;
+  }
+
   _repair() {
     if (this.scenario) this._finishScenario(true);
     this.lesson = null;
@@ -1544,11 +1686,17 @@ export class Simulation {
       }
       this.db = this.db.filter((n) => !n.remove);
     }
-    for (const n of this.nat) n.state = 'ok';
+    // a zonal NAT Gateway comes back with its AZ; a Regional one drops the presence it lost
+    // there and has to expand into the AZ again once servers run in it
+    if (c.nat === 'regional') this.nat = this.nat.filter((n) => n.state !== 'failed');
+    else for (const n of this.nat) n.state = 'ok';
     this._clearTimers('traffic');
     this._clearTimers('attack');
     this._clearTimers('ext');
     this._clearTimers('data');
+    this._clearTimers('leak');
+    if (this.leak.active) this._emit('leakStopped', 'warn', 'Quản trị viên vô hiệu hoá access key bị lộ và xoá các máy đào coin — sau khi chúng đã chạy một lúc.');
+    this.leak = { active: false, detected: false, start: -100 };
     this.night = false;
     this.targetUsers = USERS.normal;
     this._ddosRps = 0;
@@ -1611,6 +1759,9 @@ export class Simulation {
       natS3CostMax: 0,
       primaryAz: primary ? primary.az : null,
       natAz: this.nat[0] ? this.nat[0].az : null,
+      natReady: this.nat.filter((n) => n.state === 'ok').map((n) => n.az), // AZs with a NAT ready to use
+      natHoursMin: this._natHours(),
+      natWaited: false, // servers had no way out while a Regional NAT Gateway was still expanding
       dbPrimaryAz: dbPrimary ? dbPrimary.az : null,
       cfgChanged: false,
     };
@@ -1644,6 +1795,8 @@ export class Simulation {
     sc.sqliFailMax = Math.max(sc.sqliFailMax, f.sqliFail);
     sc.queueMax = Math.max(sc.queueMax, this.queue.depth);
     sc.natS3CostMax = Math.max(sc.natS3CostMax, gbPerHour(f.s3NatRps * S3APP.kbPerCall) * NAT.costPerGB);
+    sc.natHoursMin = Math.min(sc.natHoursMin, this._natHours());
+    if ((f.outFailRps > 0 || f.awsFailRps > 0) && f.targets.some((t) => t.out?.expanding)) sc.natWaited = true;
     // overloaded even though Auto Scaling already runs every instance it is allowed
     const c = this.config;
     if (c.compute === 'ec2' && c.asg && f.avgCpu > 1) {
@@ -1667,6 +1820,7 @@ export class Simulation {
       !this.nat.some((n) => n.state === 'failed') &&
       !this.extDown &&
       !this.data.wiped &&
+      !this.leak.active &&
       (this.metrics.status === 'ok' || this.metrics.status === 'slow')
     );
   }
@@ -1675,6 +1829,7 @@ export class Simulation {
     return (
       this.instances.some((i) => i.state === 'pending' || i.state === 'terminating') ||
       this.db.some((n) => n.state === 'promoting' || n.state === 'creating' || n.autoRecover) ||
+      this.nat.some((n) => n.state === 'expanding') ||
       this.data.restoring
     );
   }

@@ -18,6 +18,7 @@ const ACTIONS = [
   { id: 'sqlInjection', icon: 'sqli', title: 'SQL injection', desc: 'request chứa mã độc', tone: 'bad' },
   { id: 'paymentDown', icon: 'card', title: 'Thanh toán sập', desc: 'API đối tác ngừng 20 giây', tone: 'bad' },
   { id: 'dataDelete', icon: 'trash', title: 'Xoá nhầm dữ liệu', desc: 'deploy lỗi chạy DELETE', tone: 'bad' },
+  { id: 'leakedKey', icon: 'alert', title: 'Lộ access key', desc: 'key trên GitHub → máy đào coin', tone: 'bad' },
   { id: 'night', icon: 'moon', title: 'Đêm khuya', desc: 'chỉ còn 500 người', tone: 'info' },
   { id: 'repair', icon: 'wrench', title: 'Phục hồi', desc: 'sửa mọi thứ', tone: 'good' },
 ];

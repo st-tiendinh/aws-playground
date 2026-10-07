@@ -1,8 +1,10 @@
 // Scenario tests for the sandbox simulation: each architecture should react to the actions
 // the way the lesson cards claim. usage: node test/sim.test.mjs [-v]
 import assert from 'node:assert/strict';
-import { Simulation } from '../src/sim/simulation.js';
+import { normalizeConfig, Simulation } from '../src/sim/simulation.js';
+import { NAT } from '../src/sim/constants.js';
 import { presetById } from '../src/sim/presets.js';
+import { wellArchitected } from '../src/sim/lessons.js';
 
 const verbose = process.argv.includes('-v');
 let failures = 0;
@@ -216,7 +218,9 @@ test('SQL injection is a no-op without a database', () => {
 test('night: fixed fleet wastes money, serverless cost drops', () => {
   const a = new Simulation({ elb: true, ec2: { a: 2, b: 2 } });
   a.run(2);
-  assert.equal(runScenario(a, 'night').grade, 'partial');
+  const la = runScenario(a, 'night');
+  assert.equal(la.grade, 'partial');
+  assert.equal(la.badge, 'Lãng phí', 'the site never went down: the badge names the waste, not an outage');
   const b = sim('serverless');
   b.run(2);
   const lb = runScenario(b, 'night');
@@ -305,6 +309,96 @@ test('NAT gateways show up in the bill', () => {
   b.run(2);
   assert.ok(a.metrics.costBreakdown.nat > 0.1, `nat cost ${a.metrics.costBreakdown.nat}`);
   assert.equal(b.metrics.costBreakdown.nat, 0);
+});
+
+test('Regional NAT is kept only for a private fleet', () => {
+  const ha = presetById('ha').config;
+  assert.equal(normalizeConfig({ ...ha, nat: 'regional' }).nat, 'regional');
+  assert.equal(normalizeConfig({ ...ha, appSubnet: 'public', nat: 'regional' }).nat, 'none');
+  const s = sim('ha', { nat: 'regional' });
+  s.run(1);
+  assert.ok(s.nat.length === 2 && s.nat.every((n) => n.regional && n.state === 'ok'), 'ready at once in both AZs');
+  s.setConfig({ elb: false });
+  assert.equal(s.config.nat, 'none');
+  assert.equal(s.nat.length, 0);
+});
+
+test('Regional NAT: losing AZ A keeps the way out for AZ B, unlike a single NAT', () => {
+  const reg = sim('ha', { nat: 'regional' });
+  const one = sim('ha', { nat: 'single' });
+  for (const s of [reg, one]) {
+    s.run(3);
+    assert.ok(s.trigger('quake', { az: 'a' }));
+    s.run(12);
+  }
+  assert.equal(reg.flows.outFailRps, 0, 'AZ B goes out through its own part of the Regional NAT');
+  assert.equal(reg.metrics.status, 'ok');
+  assert.ok(one.flows.outFailRps > 0, 'the single NAT sat in AZ A');
+  for (let k = 0; k < 600 && !reg.lesson; k++) reg.run(0.1);
+  const l = reg.lesson;
+  assert.notEqual(l.grade, 'fail');
+  assert.ok(l.points.some((p) => p.kind === 'good' && /Regional NAT/.test(p.text)), 'lesson credits the Regional NAT');
+  assert.ok(!l.suggestions.some((x) => x.patch.nat), 'no NAT suggestion when Regional NAT is on');
+  // once AZ A is back and gets servers again, the gateway has to expand into it again
+  reg.trigger('repair');
+  const natA = () => reg.nat.find((n) => n.az === 'a');
+  for (let k = 0; k < 100 && !natA(); k++) reg.run(0.1);
+  assert.equal(natA()?.state, 'expanding');
+  reg.run(NAT.regionalExpandTime + 0.2);
+  assert.equal(natA().state, 'ok');
+});
+
+test('Regional NAT bills each AZ it is in: like one NAT per AZ, less when servers sit in one AZ', () => {
+  const natCost = (cfg) => {
+    const s = new Simulation(cfg);
+    s.run(2);
+    return s.metrics.costBreakdown.nat;
+  };
+  const ha = presetById('ha').config;
+  const perAz = natCost({ ...ha, nat: 'perAz' });
+  const regional = natCost({ ...ha, nat: 'regional' });
+  assert.ok(Math.abs(perAz - regional) < 1e-9, `perAz ${perAz} vs regional ${regional}`);
+  const oneAz = { elb: true, appSubnet: 'private', ec2: { a: 2, b: 0 } };
+  const a = natCost({ ...oneAz, nat: 'perAz' });
+  const b = natCost({ ...oneAz, nat: 'regional' });
+  assert.ok(Math.abs(a - b - NAT.costPerHour) < 1e-9, `perAz ${a} vs regional ${b}: one NAT-hour less`);
+});
+
+test('Regional NAT expands into a new AZ; meanwhile that AZ goes out through the other one', () => {
+  const s = new Simulation({ elb: true, appSubnet: 'private', nat: 'regional', ec2: { a: 1, b: 0 } });
+  s.run(2);
+  assert.deepEqual(s.nat.map((n) => `${n.az}:${n.state}`), ['a:ok']);
+  s.setConfig({ ec2: { a: 1, b: 1 } });
+  s.run(0.1);
+  const natB = () => s.nat.find((n) => n.az === 'b');
+  assert.equal(natB()?.state, 'expanding');
+  assert.ok(s.events.some((e) => e.type === 'natExpand' && e.az === 'b'));
+  s.run(3.9); // the new server boots and joins the load balancer
+  const ib = s.instances.find((i) => i.az === 'b');
+  const out = () => s.flows.targets.find((t) => t.id === ib.id)?.out;
+  assert.equal(natB().state, 'expanding');
+  assert.deepEqual(out(), { ok: true, via: 'nat-a', cross: true }, 'AZ B goes out through AZ A meanwhile');
+  assert.equal(s.flows.outFailRps, 0);
+  s.run(NAT.regionalExpandTime - 3.9); // regionalExpandTime after it started expanding
+  assert.equal(natB().state, 'ok');
+  assert.equal(out().via, 'nat-b', 'AZ B now uses its own part of the gateway');
+  assert.ok(s.events.some((e) => e.type === 'natExpanded' && e.az === 'b'));
+  // no servers left in AZ B: the gateway leaves it again
+  s.setConfig({ ec2: { a: 1, b: 0 } });
+  s.run(0.1);
+  assert.equal(natB(), undefined);
+  assert.ok(s.events.some((e) => e.type === 'natContract' && e.az === 'b'));
+});
+
+test('Regional NAT not yet in the surviving AZ: its new servers wait for the gateway to expand', () => {
+  const s = sim('ha', { nat: 'regional', asgMin: 1 });
+  s.run(3);
+  assert.deepEqual(s.nat.map((n) => n.az), ['a'], 'one server, in AZ A: the gateway is only there');
+  const l = runScenario(s, 'quake', { az: 'a' });
+  assert.ok(s.events.some((e) => e.type === 'natExpand' && e.az === 'b'));
+  assert.ok(l.points.some((p) => p.kind === 'bad' && /Regional NAT/.test(p.text)), 'lesson explains the expansion wait');
+  assert.ok(l.suggestions.some((x) => x.patch.asgMin === 2));
+  assert.equal(s.flows.outFailRps, 0, 'fine once the gateway is present in AZ B');
 });
 
 test('repair during an RDS failover keeps exactly one primary and one standby', () => {
@@ -461,6 +555,63 @@ test('spike lesson points at the NAT bill for S3 traffic and suggests a VPC Endp
   t.run(3);
   const lt = runScenario(t, 'spike');
   assert.ok(lt.points.some((p) => p.kind === 'good' && /VPC Endpoint/.test(p.text)));
+});
+
+test('events about one instance or database keep their own unique ids', () => {
+  const s = sim('ha');
+  s.run(3);
+  runScenario(s, 'serverFail');
+  s.trigger('repair');
+  s.run(3);
+  runScenario(s, 'spike');
+  s.trigger('repair');
+  s.run(30); // the fleet scales back in after the spike
+  s.trigger('dbFail');
+  s.run(5);
+  const of = (type) => s.events.filter((e) => e.type === type);
+  for (const type of ['serverFail', 'hcFail', 'scaleIn', 'dbFail']) assert.ok(of(type).length, `no ${type} event`);
+  const [fail] = of('serverFail');
+  assert.ok(of('hcFail').some((e) => e.instId === fail.instId), 'the health check names the broken instance');
+  assert.ok(of('scaleIn').every((e) => typeof e.instId === 'string'));
+  assert.ok(of('dbFail').every((e) => s.db.some((n) => n.id === e.dbId)));
+  const ids = s.events.map((e) => e.id);
+  assert.ok(ids.every(Number.isInteger), 'event ids are sequence numbers');
+  assert.equal(new Set(ids).size, ids.length, 'no two events share an id (the event log keys on it)');
+});
+
+test('a leaked access key: GuardDuty stops the miners, Budgets only notices late, nothing = fail', () => {
+  const grade = (patch) => {
+    const s = sim('ha');
+    s.setConfig(patch);
+    s.run(3);
+    const lt = runScenario(s, 'leakedKey');
+    return { lt, s };
+  };
+  const gd = grade({ guardduty: true, budget: 1000 });
+  assert.equal(gd.lt.grade, 'pass');
+  assert.ok(gd.s.events.some((e) => e.type === 'leakContained'));
+  assert.equal(gd.s.leak.active, false);
+  const bud = grade({ guardduty: false, budget: 1000 });
+  assert.equal(bud.lt.grade, 'partial');
+  assert.equal(bud.lt.badge, 'Phát hiện muộn', 'the site never went down: the badge names the late detection');
+  const alert = bud.s.events.find((e) => e.type === 'budgetOver');
+  const start = bud.s.events.find((e) => e.type === 'leakedKey');
+  assert.ok(alert && alert.t - start.t >= 12, 'billing data lags: Budgets alerts only after the lag');
+  assert.ok(bud.lt.suggestions.some((x) => x.patch.guardduty));
+  const none = grade({ guardduty: false, budget: 0 });
+  assert.equal(none.lt.grade, 'fail');
+  assert.ok(none.s.metrics.costBreakdown.leak > 0, 'the miners keep billing');
+  none.s.trigger('repair');
+  none.s.run(1);
+  assert.equal(none.s.leak.active, false);
+});
+
+test('Well-Architected score rises as weak spots are fixed', () => {
+  const avg = (c) => wellArchitected(normalizeConfig(c)).reduce((n, p) => n + p.score, 0) / 6;
+  const weak = avg({});
+  const strong = avg({ route53: true, cloudfront: true, s3: true, elb: true, asg: true, appSubnet: 'private', nat: 'perAz', vpce: true, database: 'rds', rdsMultiAz: true, cache: true, waf: true, shield: true, guardduty: true, budget: 1000, queue: true, backup: true });
+  assert.ok(strong > weak + 40, `${weak} → ${strong}`);
+  for (const p of wellArchitected(normalizeConfig({}))) for (const x of p.checks) if (x.patch) assert.ok(typeof x.patch === 'object');
 });
 
 if (failures) {

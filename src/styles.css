@@ -362,6 +362,13 @@ p {
   grid-template-columns: repeat(4, 1fr);
 }
 
+/* four options in a narrow panel: tighter padding, and a label never wraps — a long one
+   ("Regional") widens its own column a little instead */
+.seg.four button {
+  padding-inline: 3px;
+  white-space: nowrap;
+}
+
 .seg button {
   display: inline-flex;
   align-items: center;
@@ -672,6 +679,18 @@ p {
 
 .try-box .btn {
   width: 100%;
+}
+
+/* several suggestions in one box: a thin divider and a short title for each */
+.try-item + .try-item {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px dashed rgba(167, 139, 250, 0.35);
+}
+
+.try-item h4 {
+  margin-bottom: 4px;
+  font-size: 13px;
 }
 
 /* ── explore: stepper ───────────────────────────────────────────────────── */
@@ -1957,6 +1976,9 @@ p {
   .stat.chart {
     display: none;
   }
+  .seg.four button {
+    font-size: 11.5px;
+  }
 }
 
 .is-narrow {
@@ -2060,3 +2082,76 @@ p {
     font-size: 13px;
   }
 }
+
+/* ── sandbox: Well-Architected score ────────────────────────────────────── */
+.wa {
+  margin-top: 16px;
+  padding: 11px 12px;
+  border-radius: 13px;
+  background: rgba(59, 130, 246, 0.08);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+.wa h3 {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: #93c5fd;
+  margin-bottom: 6px;
+}
+.wa-total {
+  margin-left: auto;
+  font-family: var(--mono);
+  color: var(--text);
+}
+.wa-row {
+  display: grid;
+  grid-template-columns: 112px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 2px;
+  background: none;
+  border: 0;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.wa-row small {
+  font-family: var(--mono);
+  text-align: right;
+  opacity: 0.75;
+}
+.wa-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(148, 163, 184, 0.2);
+  overflow: hidden;
+}
+.wa-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+.wa-bar i.good { background: #4ade80; }
+.wa-bar i.warn { background: #fbbf24; }
+.wa-bar i.bad { background: #f87171; }
+.wa-checks {
+  list-style: none;
+  margin: 2px 0 6px;
+  padding: 0 0 0 4px;
+  font-size: 11.5px;
+}
+.wa-checks li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+}
+.wa-checks li span { flex: 1; }
+.wa-checks li.ok { color: #86efac; }
+.wa-checks li.miss { color: #fca5a5; }
+.wa-checks .chip-btn { padding: 1px 8px; font-size: 11px; }

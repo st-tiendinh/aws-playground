@@ -5,7 +5,7 @@ import { presetById } from '../sim/presets.js';
 import { useApp, useUi } from '../state/store.js';
 import { Icon, ServiceIcon } from './icons.jsx';
 
-const ACTION_LABEL = { quake: 'Động đất', serverFail: 'Server hỏng', spike: '1 triệu người truy cập', dbFail: 'Database sự cố', ddos: 'Tấn công DDoS', sqlInjection: 'SQL injection', paymentDown: 'Thanh toán sập', dataDelete: 'Xoá nhầm dữ liệu' };
+const ACTION_LABEL = { quake: 'Động đất', serverFail: 'Server hỏng', spike: '1 triệu người truy cập', dbFail: 'Database sự cố', ddos: 'Tấn công DDoS', sqlInjection: 'SQL injection', paymentDown: 'Thanh toán sập', dataDelete: 'Xoá nhầm dữ liệu', leakedKey: 'Lộ access key' };
 
 export function openInSandbox(engine, ui, sandbox) {
   engine.setMode('sandbox');
@@ -20,7 +20,8 @@ export function ServiceInfo() {
   const s = serviceById(id);
   if (!s) return null;
   const cat = CATEGORIES[s.category];
-  const sb = s.sandbox;
+  // one sandbox suggestion, or a list of labelled ones (a lesson that covers several parts)
+  const tries = !s.sandbox ? [] : Array.isArray(s.sandbox) ? s.sandbox : [s.sandbox];
 
   return (
     <article className="svc-info">
@@ -78,21 +79,26 @@ export function ServiceInfo() {
         </p>
       )}
 
-      {sb && (
+      {tries.length > 0 && (
         <div className="try-box">
-          <p>
-            Thử trong Sandbox với kiến trúc <b>{sb.preset ? presetById(sb.preset).name : 'gợi ý'}</b>
-            {sb.action ? (
-              <>
-                , rồi bấm sự kiện <b>{ACTION_LABEL[sb.action]}</b>
-              </>
-            ) : null}
-            .
-          </p>
-          <button className="btn btn-primary" onClick={() => openInSandbox(engine, ui, sb)}>
-            Thử trong Sandbox
-            <Icon name="arrowRight" size={16} />
-          </button>
+          {tries.map((sb, i) => (
+            <div key={sb.label || i} className="try-item">
+              {sb.label && <h4>{sb.label}</h4>}
+              <p>
+                Thử trong Sandbox với kiến trúc <b>{sb.preset ? presetById(sb.preset).name : 'gợi ý'}</b>
+                {sb.action ? (
+                  <>
+                    , rồi bấm sự kiện <b>{ACTION_LABEL[sb.action]}</b>
+                  </>
+                ) : null}
+                .
+              </p>
+              <button className="btn btn-primary" onClick={() => openInSandbox(engine, ui, sb)}>
+                Thử trong Sandbox
+                <Icon name="arrowRight" size={16} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </article>

@@ -61,8 +61,10 @@ export const S3 = { ms: 25, costPerMillion: 0.4, storagePerHour: 0.003 };
 export const ELB = { ms: 2, costPerHour: 0.0225, lcuPerRps: 1 / 250, lcuCost: 0.008 };
 export const R53 = { costPerHour: 0.0007, queryRatio: 0.01, costPerMillion: 0.4 };
 // share of dynamic requests that call an outside API (payment, email…) and so need a way out
-// to the Internet; servers in a private subnet only have one through a NAT Gateway
-export const NAT = { outboundShare: 0.15, kbPerCall: 10, costPerHour: 0.059, costPerGB: 0.059 };
+// to the Internet; servers in a private subnet only have one through a NAT Gateway. A Regional
+// NAT Gateway (one for the whole VPC) joins an AZ that gets servers in `regionalExpandTime`
+// (real life: 15–20 min on average, up to 60 min) and bills one NAT Gateway-hour per AZ it is in
+export const NAT = { outboundShare: 0.15, kbPerCall: 10, costPerHour: 0.059, costPerGB: 0.059, regionalExpandTime: 15 };
 // the outside APIs themselves (payment provider, email…): a synchronous call adds this much to
 // the request, and a provider outage lasts `downHold` seconds
 export const EXT = { ms: 220, downHold: 20 };
@@ -87,8 +89,20 @@ export const WIPE = { share: 0.7 };
 // month; alerts at 80% and 100% of the budget, re-armed once the forecast falls below 70%
 export const BUDGET = { options: [200, 1000, 5000], warnAt: 0.8, rearmAt: 0.7, smoothing: 3, hoursPerMonth: 730 };
 
+// "leaked access key": a long-term IAM user key pushed to a public Git repo is used within
+// minutes to launch GPU crypto miners in other Regions. `costPerHour` is an illustrative bill for
+// a few dozen big GPU instances. GuardDuty (reads CloudTrail, VPC Flow Logs and DNS logs, no
+// agent) raises a finding after `gdDetect`; an EventBridge rule runs a Lambda that disables the
+// key and stops the miners `gdRespond` later. Billing data lags by hours, so AWS Budgets only
+// sees the new spend after `billingLag`. `realHours`: how long the miners run in real life before
+// someone notices — GuardDuty minutes, Budgets about half a day, the monthly bill about two weeks
+export const LEAK = { miners: 6, costPerHour: 400, gdDetect: 3, gdRespond: 2, billingLag: 12, realHours: { guardduty: 0.25, budgets: 10, bill: 360 } };
+// GuardDuty: billed by the volume of logs and events it analyses — a small app is a few dollars a
+// month (illustrative); the first 30 days are a free trial
+export const GUARDDUTY = { costPerHour: 0.006 };
+
 // how long each scenario is watched before the lesson card appears (simulated seconds)
-export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26, paymentDown: 30, dataDelete: 30 };
+export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26, paymentDown: 30, dataDelete: 30, leakedKey: 24 };
 export const SPIKE_HOLD = 30;
 export const NIGHT_HOLD = 18;
 

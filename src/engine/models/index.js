@@ -110,6 +110,15 @@ const FACTORY = {
   firehose: (o) => new TokenModel({ kind: 'firehose', category: 'integration', color: '#7c3aed', shape: 'card', text: 'Firehose', fontSize: 50, glow: true, size: 1.4, ...o }),
   ssm: (o) => new SSMModel(o),
   backup: (o) => new VaultModel(o),
+  // security & governance: IAM Identity Center, GuardDuty, AWS Config, Trusted Advisor
+  idc: (o) => new TokenModel({ kind: 'idc', category: 'security', color: CAT_COLOR.security, shape: 'cube', text: 'SSO', fontSize: 80, glow: true, size: 1.4, ...o }),
+  permset: (o) => new TokenModel({ kind: 'permset', category: 'security', color: '#9f1239', shape: 'card', text: 'PermSet', fontSize: 52, glow: true, size: 1.2, ...o }),
+  guardduty: (o) => new TokenModel({ kind: 'guardduty', category: 'security', color: CAT_COLOR.security, shape: 'cube', text: 'GuardDuty', fontSize: 44, glow: true, size: 1.5, ...o }),
+  finding: (o) => new TokenModel({ kind: 'finding', category: 'security', color: '#b91c1c', shape: 'card', text: 'Finding', fontSize: 56, glow: true, size: 1.1, ...o }),
+  config: (o) => new TokenModel({ kind: 'config', category: 'management', color: CAT_COLOR.management, shape: 'cube', text: 'Config', fontSize: 64, glow: true, size: 1.4, ...o }),
+  rule: (o) => new TokenModel({ kind: 'rule', category: 'management', color: '#1d4ed8', shape: 'card', text: 'Rule', fontSize: 72, glow: true, size: 1.0, ...o }),
+  advisor: (o) => new TokenModel({ kind: 'advisor', category: 'management', color: '#1e40af', shape: 'cube', text: 'Advisor', fontSize: 56, glow: true, size: 1.4, ...o }),
+  miner: (o) => new TokenModel({ kind: 'miner', category: 'compute', color: '#7f1d1d', shape: 'cube', text: 'Miner', fontSize: 62, glow: true, size: 1.0, ...o }),
   param: (o) => new TokenModel({ kind: 'param', category: 'management', color: '#1d4ed8', shape: 'card', text: 'Param', fontSize: 66, glow: true, size: 1.2, ...o }),
 };
 
