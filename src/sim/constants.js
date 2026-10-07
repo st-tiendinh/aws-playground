@@ -101,8 +101,17 @@ export const LEAK = { miners: 6, costPerHour: 400, gdDetect: 3, gdRespond: 2, bi
 // month (illustrative); the first 30 days are a free trial
 export const GUARDDUTY = { costPerHour: 0.006 };
 
+// "bad deploy": a new release answers 500 on every dynamic request. All at once, it reaches the
+// whole fleet in `rollout` and stays until someone notices — users complain, the on-call engineer
+// checks the dashboards — after `manualDetect` (real life 15–30 minutes) and redeploys the old
+// version in `manualRollback`. With a canary, CodeDeploy first sends `canaryShare` of the traffic to
+// it (ALB weighted target groups for EC2, alias weights for Lambda); a CloudWatch alarm on the 5xx
+// rate fires after `alarmTime` (real life 1–3 minutes) and CodeDeploy shifts everything back
+// within `shiftBack`
+export const DEPLOY = { rollout: 2, manualDetect: 12, manualRollback: 4, canaryShare: 0.1, alarmTime: 3, shiftBack: 1 };
+
 // how long each scenario is watched before the lesson card appears (simulated seconds)
-export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26, paymentDown: 30, dataDelete: 30, leakedKey: 24 };
+export const SCENARIO_TIME = { quake: 22, serverFail: 16, spike: 38, dbFail: 32, night: 26, ddos: 30, sqlInjection: 26, paymentDown: 30, dataDelete: 30, leakedKey: 24, badDeploy: 26 };
 export const SPIKE_HOLD = 30;
 export const NIGHT_HOLD = 18;
 

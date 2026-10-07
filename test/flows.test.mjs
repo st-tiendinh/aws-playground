@@ -5,9 +5,9 @@ import { FLOWS } from '../src/data/flows.js';
 import * as catalogue from '../src/data/services.js';
 
 const { SERVICES } = catalogue;
-const SANDBOX_ACTIONS = new Set([null, 'quake', 'serverFail', 'spike', 'dbFail', 'ddos', 'sqlInjection', 'paymentDown', 'dataDelete', 'leakedKey']);
+const SANDBOX_ACTIONS = new Set([null, 'quake', 'serverFail', 'spike', 'dbFail', 'ddos', 'sqlInjection', 'paymentDown', 'dataDelete', 'leakedKey', 'badDeploy']);
 
-const KINDS = new Set(['ec2', 'elb', 's3', 'rds', 'dynamodb', 'lambda', 'apigw', 'igw', 'nat', 'external', 'cloudfront', 'edge', 'route53', 'users', 'user', 'az', 'zone', 'region', 'outline', 'subnet', 'globe', 'token', 'cloudwatch', 'sqs', 'iam', 'sns', 'cache', 'waf', 'shield', 'ecs', 'secrets', 'cognito', 'ebs', 'snapshot', 'kms', 'cloudtrail', 'eventbridge', 'cloudformation', 'budgets', 'costexplorer', 'acm', 'stepfunctions', 'efs', 'mount', 'ecr', 'aurora', 'resp', 'vpce', 'eni', 'sg', 'nacl', 'org', 'account', 'ou', 'scp', 'kinesis', 'firehose', 'ssm', 'param', 'backup', 'idc', 'permset', 'guardduty', 'finding', 'config', 'rule', 'advisor', 'miner']);
+const KINDS = new Set(['ec2', 'elb', 's3', 'rds', 'dynamodb', 'lambda', 'apigw', 'igw', 'nat', 'external', 'cloudfront', 'edge', 'route53', 'users', 'user', 'az', 'zone', 'region', 'outline', 'subnet', 'globe', 'token', 'cloudwatch', 'sqs', 'iam', 'sns', 'cache', 'waf', 'shield', 'ecs', 'secrets', 'cognito', 'ebs', 'snapshot', 'kms', 'cloudtrail', 'eventbridge', 'cloudformation', 'budgets', 'costexplorer', 'acm', 'stepfunctions', 'efs', 'mount', 'ecr', 'aurora', 'resp', 'vpce', 'eni', 'sg', 'nacl', 'org', 'account', 'ou', 'scp', 'kinesis', 'firehose', 'ssm', 'param', 'backup', 'idc', 'permset', 'guardduty', 'finding', 'config', 'rule', 'advisor', 'miner', 'eks', 'pod', 'beanstalk', 'codepipeline', 'codebuild', 'codedeploy', 'xray']);
 const ACTIONS = new Set(['packet', 'stream', 'pulse', 'callout', 'beam', 'break', 'fix', 'quake', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count', 'flash', 'focus', 'shake', 'sound']);
 const STEP_KEYS = new Set(['key', 'title', 'text', 'dur', 'cam', 'run', 'loop', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count']);
 

@@ -16,6 +16,7 @@ import {
   CF,
   DDB,
   DDOS,
+  DEPLOY,
   EC2,
   ELB,
   EXT,
@@ -67,6 +68,7 @@ export const DEFAULT_CONFIG = {
   vpce: false, // VPC Endpoints: a private fleet reaches S3 (Gateway) and SQS (Interface) without NAT
   backup: false, // AWS Backup: daily backups + point-in-time recovery of the data store
   guardduty: false, // Amazon GuardDuty: threat detection on CloudTrail, VPC Flow Logs and DNS logs
+  canary: false, // CodeDeploy canary: a new release gets 10% of traffic first, a 5xx alarm rolls it back
 };
 
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
@@ -90,7 +92,7 @@ export function normalizeConfig(c = {}) {
   const out = { ...DEFAULT_CONFIG, ...c, ec2: { ...DEFAULT_CONFIG.ec2, ...(c.ec2 || {}) } };
   out.compute = out.compute === 'lambda' ? 'lambda' : 'ec2';
   out.database = out.database === 'rds' || out.database === 'dynamodb' ? out.database : 'none';
-  for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz', 'cache', 'waf', 'shield', 'queue', 'vpce', 'backup', 'guardduty']) out[k] = !!out[k];
+  for (const k of ['route53', 'cloudfront', 's3', 'elb', 'asg', 'rdsMultiAz', 'cache', 'waf', 'shield', 'queue', 'vpce', 'backup', 'guardduty', 'canary']) out[k] = !!out[k];
   for (const az of AZ_IDS) out.ec2[az] = clamp(Math.round(out.ec2[az] || 0), 0, EC2.maxPerAz);
   if (out.compute === 'ec2' && !out.asg && out.ec2.a + out.ec2.b === 0) out.ec2.a = 1;
   out.budget = BUDGET.options.includes(Number(out.budget)) ? Number(out.budget) : 0;
@@ -100,6 +102,8 @@ export function normalizeConfig(c = {}) {
     out.elb = false;
     out.asg = false;
   }
+  // a canary splits traffic by weight: an ALB in front of EC2, or a Lambda alias
+  if (out.compute === 'ec2' && !out.elb) out.canary = false;
   if (out.database !== 'rds') {
     out.rdsMultiAz = false;
     out.cache = false;
@@ -127,6 +131,7 @@ const NAMES = {
   vpce: 'VPC Endpoint (S3, SQS)',
   backup: 'AWS Backup',
   guardduty: 'Amazon GuardDuty',
+  canary: 'deploy canary + tự rollback',
 };
 
 const instName = (i) => `EC2 #${i.n}`;
@@ -213,6 +218,8 @@ export class Simulation {
         return this._dataDelete();
       case 'leakedKey':
         return this._leakedKey();
+      case 'badDeploy':
+        return this._badDeploy();
       case 'repair':
         return this._repair();
       default:
@@ -265,6 +272,7 @@ export class Simulation {
       queue: this.config.queue ? { depth: this.queue.depth, inRate: this.flows.queueIn, outRate: this.flows.queueOut } : null,
       extDown: this.extDown,
       leak: { active: this.leak.active, detected: this.leak.detected, seen: this.t - this.leak.start >= LEAK.billingLag },
+      deploy: { active: this.deploy.active, phase: this.deploy.phase, share: this.deploy.share, canary: this.deploy.canary },
       data: { wiped: this.data.wiped, restoring: this.data.restoring, remaining: this.data.restoring ? Math.max(0, this.data.timer) : 0, lost: this.data.lost },
       s3App: { rps: this.flows.s3AppRps, viaNat: this.flows.s3NatRps, viaEndpoint: this.flows.s3VpceRps, failing: this.flows.awsFailRps },
       scenario: sc ? { action: sc.action, az: sc.az, remaining: Math.max(0, sc.end - this.t) } : null,
@@ -296,6 +304,8 @@ export class Simulation {
     this.queue = { depth: 0, warned: false }; // SQS backlog: messages waiting for the worker
     this.data = { wiped: false, restoring: false, timer: 0, lost: false, hadBackup: false };
     this.leak = { active: false, detected: false, start: -100 }; // crypto miners running on a leaked access key
+    // a release being rolled out: `share` of the app traffic runs the new (buggy) version
+    this.deploy = { active: false, phase: 'idle', share: 0, start: -100, canary: false };
     this.asgDesired = 0;
     this._overSince = null;
     this._lastScaleIn = -100;
@@ -656,6 +666,7 @@ export class Simulation {
     this._traffic(dt);
     this._lifecycle(dt);
     this._restoreTick(dt);
+    this._deployTick(dt);
     this._hcClock += dt;
     if (this._hcClock >= HEALTH.interval - 1e-9) {
       this._hcClock = 0;
@@ -770,6 +781,32 @@ export class Simulation {
     d.wiped = false;
     d.timer = 0;
     this._emit('restoreDone', 'success', 'Khôi phục xong: dữ liệu trở về thời điểm ngay trước lệnh xoá, ứng dụng chuyển sang bản vừa dựng lại.');
+  }
+
+  // a release rolling out (all at once: share climbs to 1) or rolling back (share falls to 0)
+  _deployTick(dt) {
+    const d = this.deploy;
+    if (!d.active) return;
+    if (d.phase === 'rolling') {
+      d.share = Math.min(1, d.share + dt / DEPLOY.rollout);
+      if (d.share >= 1) {
+        d.phase = 'live';
+        const where = this.config.compute === 'ec2' ? 'mọi EC2' : 'hàm Lambda';
+        this._emit('deployLive', 'error', `Bản v2 đã chạy trên ${where}: mọi request động (đặt hàng, đăng nhập…) trả lỗi 500!`);
+      }
+    } else if (d.phase === 'rollback') {
+      d.share = Math.max(0, d.share - (d.from * dt) / d.backTime);
+      if (d.share <= 0) {
+        this.deploy = { active: false, phase: 'idle', share: 0, start: -100, canary: false };
+        this._emit(
+          'deployRolledBack',
+          'success',
+          d.canary
+            ? 'Đã rollback: 100% traffic về lại bản cũ. Bản lỗi chỉ chạm khoảng 10% request trong vài giây.'
+            : 'Đã deploy lại bản cũ lên mọi máy — website hoạt động bình thường trở lại.',
+        );
+      }
+    }
   }
 
   _healthChecks() {
@@ -944,6 +981,7 @@ export class Simulation {
       queue: c.queue,
       vpce: c.vpce,
       extDown: this.extDown,
+      deploy: this.deploy.active ? { phase: this.deploy.phase, share: this.deploy.share, canary: this.deploy.canary } : null,
       queueIn: 0,
       queueOut: 0,
       s3AppShare: c.s3 && c.compute === 'ec2' ? S3APP.share : 0,
@@ -1160,6 +1198,8 @@ export class Simulation {
 
     // an accidental delete: most dynamic requests need rows that are gone until a restore
     if (this.data.wiped) dynOk *= 1 - WIPE.share;
+    // a buggy release answers 500 on every dynamic request it serves
+    if (this.deploy.share > 0) dynOk *= 1 - this.deploy.share;
     // requests whose outside API call (payment, email…) found no way out — or a provider that
     // is down — fail as well, and so do the ones whose S3 / SQS call found no way out
     if ((outFail > 0 || awsFail > 0) && dynServed > 0) dynOk *= Math.max(0, 1 - (outFail + awsFail) / dynServed);
@@ -1636,6 +1676,56 @@ export class Simulation {
     return true;
   }
 
+  // a release with a bug: every dynamic request it serves answers 500. All at once, the whole fleet
+  // runs it until someone notices and redeploys the old version by hand. With a canary only 10% of
+  // traffic reaches it, a CloudWatch alarm on the 5xx rate trips and CodeDeploy rolls it back.
+  // Health checks stay green either way: the servers are up, only the new code fails.
+  _badDeploy() {
+    const c = this.config;
+    if (this.deploy.active) {
+      this._emit('noop', 'warn', 'Bản deploy trước vẫn chưa xong — đợi nó kết thúc đã.');
+      return false;
+    }
+    this._startScenario('badDeploy', { hadCanary: c.canary });
+    const ec2 = c.compute === 'ec2';
+    if (c.canary) {
+      this.deploy = { active: true, phase: 'canary', share: DEPLOY.canaryShare, start: this.t, canary: true, backTime: DEPLOY.shiftBack };
+      this._emit(
+        'deployStart',
+        'warn',
+        ec2
+          ? 'Deploy bản v2 kiểu canary: ALB chỉ chuyển 10% traffic sang nhóm máy chạy bản mới, 90% vẫn ở bản cũ.'
+          : 'CodeDeploy deploy bản v2 kiểu canary: alias Lambda chỉ chuyển 10% lời gọi sang phiên bản mới, 90% vẫn ở bản cũ.',
+      );
+      this._schedule(
+        DEPLOY.alarmTime,
+        () => {
+          const d = this.deploy;
+          if (!d.active || d.phase !== 'canary') return;
+          d.phase = 'rollback';
+          d.from = d.share;
+          this._emit('deployAlarm', 'error', 'CloudWatch alarm: tỉ lệ lỗi 5xx của bản mới vượt ngưỡng → dừng deploy và tự rollback về bản cũ.');
+        },
+        'deploy',
+      );
+    } else {
+      this.deploy = { active: true, phase: 'rolling', share: 0, start: this.t, canary: false, backTime: DEPLOY.manualRollback };
+      this._emit('deployStart', 'warn', `Deploy bản v2 một lần (all at once) lên ${ec2 ? 'mọi EC2' : 'hàm Lambda'}…`);
+      this._schedule(
+        DEPLOY.manualDetect,
+        () => {
+          const d = this.deploy;
+          if (!d.active || d.canary) return;
+          d.phase = 'rollback';
+          d.from = d.share;
+          this._emit('deployManual', 'warn', 'Khách phàn nàn, người trực mở dashboard thấy lỗi 5xx tăng vọt — bắt đầu deploy lại bản cũ…');
+        },
+        'deploy',
+      );
+    }
+    return true;
+  }
+
   _repair() {
     if (this.scenario) this._finishScenario(true);
     this.lesson = null;
@@ -1695,6 +1785,9 @@ export class Simulation {
     this._clearTimers('ext');
     this._clearTimers('data');
     this._clearTimers('leak');
+    this._clearTimers('deploy');
+    if (this.deploy.active) this._emit('deployStopped', 'warn', 'Quản trị viên dừng bản deploy và đưa mọi máy về bản cũ.');
+    this.deploy = { active: false, phase: 'idle', share: 0, start: -100, canary: false };
     if (this.leak.active) this._emit('leakStopped', 'warn', 'Quản trị viên vô hiệu hoá access key bị lộ và xoá các máy đào coin — sau khi chúng đã chạy một lúc.');
     this.leak = { active: false, detected: false, start: -100 };
     this.night = false;
@@ -1821,6 +1914,7 @@ export class Simulation {
       !this.extDown &&
       !this.data.wiped &&
       !this.leak.active &&
+      !this.deploy.active &&
       (this.metrics.status === 'ok' || this.metrics.status === 'slow')
     );
   }

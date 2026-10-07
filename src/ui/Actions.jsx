@@ -1,6 +1,6 @@
 // Sandbox, right panel: the events you can throw at the architecture (earthquake, broken
 // server, a million users, database failure, attacks, a payment-provider outage, an
-// accidental delete, night time, repair), traffic and speed.
+// accidental delete, a leaked key, a bad deploy, night time, repair), traffic and speed.
 import { useState } from 'react';
 import { ACTION_TITLE } from '../sim/lessons.js';
 import { USERS } from '../sim/constants.js';
@@ -19,6 +19,7 @@ const ACTIONS = [
   { id: 'paymentDown', icon: 'card', title: 'Thanh toán sập', desc: 'API đối tác ngừng 20 giây', tone: 'bad' },
   { id: 'dataDelete', icon: 'trash', title: 'Xoá nhầm dữ liệu', desc: 'deploy lỗi chạy DELETE', tone: 'bad' },
   { id: 'leakedKey', icon: 'alert', title: 'Lộ access key', desc: 'key trên GitHub → máy đào coin', tone: 'bad' },
+  { id: 'badDeploy', icon: 'bug', title: 'Deploy lỗi', desc: 'bản v2 trả lỗi 500', tone: 'bad' },
   { id: 'night', icon: 'moon', title: 'Đêm khuya', desc: 'chỉ còn 500 người', tone: 'info' },
   { id: 'repair', icon: 'wrench', title: 'Phục hồi', desc: 'sửa mọi thứ', tone: 'good' },
 ];

@@ -13,6 +13,7 @@ export const ACTION_TITLE = {
   paymentDown: 'Đối tác thanh toán sập',
   dataDelete: 'Xoá nhầm dữ liệu',
   leakedKey: 'Lộ access key',
+  badDeploy: 'Deploy bản lỗi',
 };
 
 // what a private EC2 fleet without a NAT Gateway can no longer reach. Empty when nothing breaks:
@@ -374,6 +375,30 @@ export function evaluateLesson(sc) {
       break;
     }
 
+    case 'badDeploy': {
+      if (sc.hadCanary) {
+        good(
+          ec2
+            ? 'Canary: ALB chia traffic theo trọng số giữa hai target group — chỉ 10% tới nhóm máy chạy bản mới, 90% người dùng vẫn ở bản cũ.'
+            : 'Canary: CodeDeploy chỉnh trọng số của alias Lambda — chỉ 10% lời gọi tới phiên bản mới, 90% vẫn chạy bản cũ.',
+        );
+        good('CloudWatch alarm thấy tỉ lệ 5xx của bản mới tăng vọt: việc deploy tự dừng và rollback trong vài giây — không cần ai thức dậy bấm nút.');
+        info(
+          ec2
+            ? 'Ngoài thực tế với EC2, canary qua ALB có sẵn ở Elastic Beanstalk (traffic splitting); ECS và Lambda dùng cấu hình …Canary10Percent5Minutes của CodeDeploy. Bản mới giữ 10% vài phút cho alarm kịp đánh giá.'
+            : 'Ngoài thực tế: CodeDeployDefault.LambdaCanary10Percent5Minutes giữ 10% trong 5 phút cho alarm kịp đánh giá — bản lỗi vẫn chỉ chạm khoảng 10% lời gọi.',
+        );
+      } else {
+        bad(`Deploy một lần (all at once): ${ec2 ? 'mọi EC2' : 'mọi lời gọi Lambda'} chạy bản lỗi cùng lúc — 100% request động (đặt hàng, đăng nhập…) trả lỗi 500.`);
+        bad('Không có alarm tự rollback: phải đợi khách phàn nàn, người trực xem dashboard rồi deploy lại bản cũ — ngoài thực tế thường mất 15–30 phút.');
+        suggest('Bật deploy canary + tự rollback', ec2 && !cfg.elb ? { canary: true, elb: true } : { canary: true });
+      }
+      if (ec2 && cfg.elb) info('Health check của Load Balancer không bắt được lỗi này: máy vẫn sống và trả lời /health, chỉ code mới trả 500 — phải đặt alarm trên tỉ lệ lỗi 5xx.');
+      if (cfg.s3) info('File tĩnh trên S3 vẫn tải bình thường: chúng không chạy code của bản mới.');
+      info('Test tự động trong CodeBuild chặn được phần lớn lỗi trước khi deploy, nhưng không phải tất cả — canary là lưới an toàn cuối cùng.');
+      break;
+    }
+
     default:
       break;
   }
@@ -401,11 +426,17 @@ export function evaluateLesson(sc) {
   if (dataLost) grade = 'fail';
   // a leaked key never hurts the site: judged by how soon anyone noticed the miners
   if (sc.action === 'leakedKey') grade = sc.hadGuardDuty ? 'pass' : sc.hadBudget ? 'partial' : 'fail';
+  // a bad release: judged by how many users it reached
+  if (sc.action === 'badDeploy') grade = sc.hadCanary ? 'pass' : 'fail';
 
   const headline = dataLost
     ? 'Dữ liệu đã mất vĩnh viễn!'
     : sc.action === 'leakedKey'
       ? { pass: 'Chặn kịp trong vài phút!', partial: 'Phát hiện muộn — tiền đã mất', fail: 'Không ai phát hiện — hoá đơn khổng lồ!' }[grade]
+      : sc.action === 'badDeploy'
+      ? grade === 'pass'
+        ? 'Bản lỗi bị chặn ở 10% traffic!'
+        : 'Bản lỗi tới tay mọi người dùng!'
       : sc.action === 'night'
       ? grade === 'pass'
         ? 'Chi phí co giãn theo lượng truy cập'
@@ -455,6 +486,7 @@ export function wellArchitected(c) {
   add('ops', elastic, ec2 ? 'Auto Scaling tự thay máy hỏng (self-healing)' : 'Lambda: AWS tự lo máy chủ', { asg: true, elb: true });
   add('ops', c.queue, 'Tách việc chậm ra hàng đợi (SQS) — lỗi đối tác không lan sang web', { queue: true });
   add('ops', c.budget > 0, 'Có cảnh báo khi chi phí bất thường (AWS Budgets)', { budget: BUDGET.options[1] });
+  add('ops', c.canary, 'Deploy an toàn: canary + tự rollback khi alarm 5xx', ec2 && !c.elb ? { canary: true, elb: true } : { canary: true });
 
   add('sec', c.guardduty, 'GuardDuty phát hiện mối đe doạ (key bị lộ, máy đào coin)', { guardduty: true });
   add('sec', c.waf, 'WAF lọc request độc hại (SQL injection, XSS)', { waf: true });

@@ -40,6 +40,10 @@ export const LAYOUT = {
   // account-level threat detection, and the miners someone runs with a leaked key in another Region
   guardduty: [-27, 0, -6],
   miners: { x: -27, z: -18.5 },
+  // a release being canary-tested: a small EC2 group behind the ALB's second target group, next to
+  // the load balancer, or the new Lambda version beside the old one
+  canary: [2.5, 0, -3.5],
+  lambdaV2: [8.5, 0, -7],
   // subnet tiles inside each AZ strip: [public (NAT) | app servers | data]
   tiles: { pub: { x: 1.8, w: 3.0 }, app: { x: 9.05, w: 10.9 }, data: { x: 17.7, w: 5.6 } },
   asg: { x: 9.05, z: 0, w: 11.4, d: 26.4 },
@@ -100,6 +104,9 @@ const pickWeighted = (list) => {
   }
   return list[list.length - 1];
 };
+
+// label of the app tier while a release rolls out all at once
+const deploySub = (d) => (d.phase === 'rollback' ? 'đang quay về bản cũ…' : d.share < 1 ? 'đang cài bản v2…' : 'bản v2 · lỗi 500');
 
 const fmtUsers = (n) => (n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace('.0', '') + ' triệu' : Math.round(n).toLocaleString('vi-VN'));
 
@@ -254,6 +261,17 @@ export class SandboxScene {
         return m;
       });
     }
+    const dep = sim.deploy;
+    this._ensure('canary', dep.active && dep.canary && ec2, () => {
+      const m = createModel('ec2', { id: 'canary', position: L.canary, scale: 1.1 });
+      m.setLabel('EC2 · bản v2', 'canary 10%', { small: true });
+      return m;
+    });
+    this._ensure('lambdaV2', dep.active && dep.canary && !ec2, () => {
+      const m = createModel('lambda', { id: 'lambdaV2', position: L.lambdaV2, scale: 0.8 });
+      m.setLabel('Lambda · bản v2', 'canary 10%');
+      return m;
+    });
     // SQS backlog (log scale: 1 → 1 message, 10 → 4, 100 → 8, 1000+ → 12), vault, outside APIs
     this.node('sqs')?.setQueue(Math.min(12, Math.ceil(Math.log10(sim.queue.depth + 1) * 4)));
     this.node('backup')?.setState(sim.data.restoring ? 'restoring' : 'ok');
@@ -308,7 +326,8 @@ export class SandboxScene {
       m.setState(i.state === 'running' ? 'ok' : i.state);
       m.setLoad(i.state === 'running' ? i.cpu : 0);
       const failed = i.state === 'failed';
-      m.setLabelState(failed ? 'bad' : i.cpu > 1 ? 'warn' : null);
+      const buggy = dep.active && !dep.canary && dep.share > 0.5;
+      m.setLabelState(failed || buggy ? 'bad' : i.cpu > 1 ? 'warn' : null);
       this.fx.setEmitter('smoke:' + key, failed ? { kind: 'smoke', rate: 2.2, pos: m.anchor(new THREE.Vector3(), 0.4), size: 1.3 } : null);
       this.fx.setEmitter('heat:' + key, !failed && i.cpu > 1 ? { kind: 'heat', rate: 3, pos: m.anchor(new THREE.Vector3(), 0.9) } : null);
     }
@@ -427,8 +446,9 @@ export class SandboxScene {
     const lam = this.node('lambda');
     if (lam) {
       const conc = sim.lambda.conc;
-      lam.setLabelSub(conc < 0.05 ? 'chờ sự kiện' : `${Math.max(1, Math.round(conc))} bản chạy song song`);
-      lam.setLabelState(f.lambdaFail > 0.01 ? 'bad' : null);
+      const v2 = sim.deploy.active && !sim.deploy.canary;
+      lam.setLabelSub(v2 ? deploySub(sim.deploy) : conc < 0.05 ? 'chờ sự kiện' : `${Math.max(1, Math.round(conc))} bản chạy song song`);
+      lam.setLabelState(f.lambdaFail > 0.01 || (v2 && sim.deploy.share > 0.5) ? 'bad' : null);
     }
     const gw = this.node('apigw');
     if (gw) gw.setLabelState(f.gwFail > 0.01 ? 'bad' : null);
@@ -481,10 +501,16 @@ export class SandboxScene {
     const ext = this.node('external');
     ext.setLabelState(sim.extDown ? 'bad' : f.outFailRps > 0.01 ? 'warn' : null);
     ext.setLabelSub(sim.extDown ? 'đang sập — không phản hồi!' : f.outFailRps > 0.01 ? 'một số server không gọi ra được!' : 'API thanh toán, email…');
+    const canary = this.node('canary') || this.node('lambdaV2');
+    if (canary) {
+      canary.setLabelSub(sim.deploy.phase === 'rollback' ? 'đang rollback…' : `canary ${Math.round(sim.deploy.share * 100)}% · lỗi 500`);
+      canary.setLabelState('bad');
+    }
+    const v2 = sim.deploy.active && !sim.deploy.canary;
     for (const i of sim.instances) {
       const md = this.node('ec2:' + i.id);
       if (!md) continue;
-      md.setLabelSub(i.state === 'failed' ? 'HỎNG' : i.state === 'pending' ? 'khởi động…' : `CPU ${Math.round(i.cpu * 100)}%`);
+      md.setLabelSub(i.state === 'failed' ? 'HỎNG' : i.state === 'pending' ? 'khởi động…' : v2 ? deploySub(sim.deploy) : `CPU ${Math.round(i.cpu * 100)}%`);
       if (!md.removing) md.setLabelVisible(this.labelsOn && (!busy || i.state === 'failed'));
     }
   }
@@ -526,6 +552,11 @@ export class SandboxScene {
     const fail = () => (failSeg = segs.length - 1);
     const isStatic = Math.random() < f.staticShare;
     let color = isStatic ? COLOR.static : COLOR.dynamic;
+    // a release rolling out: with a canary, `share` of the requests go to the new version's own
+    // target (it answers 500 to dynamic ones); all at once, the servers themselves run it
+    const dep = f.deploy;
+    const toCanary = dep && dep.canary && Math.random() < dep.share;
+    const buggy = dep && !dep.canary && !isStatic && Math.random() < dep.share;
     if (f.cf) {
       hop('cloudfront');
       if (isStatic && Math.random() < f.cfHit) return this._emit(segs, color, -1, 'cloudfront');
@@ -541,6 +572,10 @@ export class SandboxScene {
           fail();
           return this._emit(segs, color, failSeg);
         }
+        if (toCanary && hop('canary')) {
+          if (!isStatic) fail();
+          return this._emit(segs, color, failSeg);
+        }
       }
       if (!f.targets.length) {
         if (!segs.length) return null;
@@ -549,7 +584,7 @@ export class SandboxScene {
       }
       const t = pickWeighted(f.targets);
       if (!hop('ec2:' + t.id)) return null;
-      if (Math.random() < t.fail) {
+      if (Math.random() < t.fail || buggy) {
         fail();
         return this._emit(segs, color, failSeg);
       }
@@ -573,8 +608,12 @@ export class SandboxScene {
         fail();
         return this._emit(segs, color, failSeg);
       }
+      if (toCanary && hop('lambdaV2')) {
+        if (!isStatic) fail();
+        return this._emit(segs, color, failSeg);
+      }
       hop('lambda');
-      if (Math.random() < f.lambdaFail) {
+      if (Math.random() < f.lambdaFail || buggy) {
         fail();
         return this._emit(segs, color, failSeg);
       }
@@ -913,6 +952,31 @@ export class SandboxScene {
       case 'sqlInjectionEnd':
         this.sfx?.play('good');
         break;
+      case 'deployStart':
+      case 'deployLive':
+      case 'deployManual':
+      case 'deployAlarm':
+      case 'deployRolledBack':
+      case 'deployStopped': {
+        // canary: speak where the new version runs; all at once: at the app tier's front door
+        const at = e.type === 'deployAlarm' ? pos('canary') || pos('lambdaV2') : pos('elb') || pos('lambda') || pos('apigw');
+        if (!at) break;
+        const dep = this.sim.deploy;
+        const text = {
+          deployStart: dep.canary ? 'Deploy v2 · canary 10%' : 'Deploy v2 · mọi máy cùng lúc',
+          deployLive: '100% chạy bản lỗi!',
+          deployManual: 'Deploy lại bản cũ…',
+          deployAlarm: 'Alarm 5xx → rollback',
+          deployRolledBack: 'Rollback xong ✓',
+          deployStopped: 'Đã về bản cũ',
+        }[e.type];
+        const kind = { deployStart: 'warn', deployLive: 'bad', deployManual: 'warn', deployAlarm: 'bad' }[e.type] || 'good';
+        this.fx.callout(new THREE.Vector3(at.x, at.y + 2.4, at.z), text, { kind, dur: 2.8 });
+        if (e.type === 'deployAlarm') this.fx.ring({ x: at.x, y: 0, z: at.z }, { color: '#f87171', r0: 1, r1: 5, dur: 1.2 });
+        if (e.type === 'deployRolledBack' || e.type === 'deployStopped') this.fx.ring({ x: at.x, y: 0, z: at.z }, { color: COLOR.ok, r0: 1, r1: 5, dur: 1.2 });
+        this.sfx?.play(kind === 'bad' ? 'alarm' : kind === 'good' ? 'good' : 'build');
+        break;
+      }
       case 'paymentDown': {
         const a = pos('external');
         if (a) {
@@ -1142,6 +1206,7 @@ export class SandboxScene {
     for (const m of this.dying) m.update(dt);
     const lam = this.node('lambda');
     if (lam) lam.setEnvs(this.sim.lambda.conc, this.sim.lambda.coldRate);
+    this.node('lambdaV2')?.setEnvs(this.sim.lambda.conc * this.sim.deploy.share);
     // the worker gets messages in batches: concurrency ≈ batches per second × run time
     this.node('worker')?.setEnvs((this.sim.flows.queueOut / SQS.batch) * LAMBDA.duration);
     this.fx.packets.timeScale = Math.max(0.0001, speed);

@@ -13,12 +13,13 @@ Chọn một dịch vụ ở cột trái để xem luồng hoạt động của 
 | Nhóm | Dịch vụ |
 | --- | --- |
 | Nền tảng | Region & Availability Zone, Mô hình trách nhiệm chung (Shared Responsibility) |
-| Tính toán | EC2, Auto Scaling, Lambda, ECS + Fargate |
+| Tính toán | EC2, Auto Scaling, Lambda, ECS + Fargate, EKS, Elastic Beanstalk |
 | Lưu trữ | S3, EBS, EFS, AWS Backup |
 | Cơ sở dữ liệu | RDS, Aurora, DynamoDB, ElastiCache |
 | Mạng | Elastic Load Balancing, CloudFront, Route 53, VPC (gồm Internet Gateway, route table, Security Group & Network ACL, NAT Gateway, VPC Endpoint & PrivateLink, Flow Logs) |
 | Tích hợp | API Gateway, SQS, SNS, EventBridge, Step Functions, Kinesis Data Streams |
 | Giám sát & quản trị | CloudWatch, CloudTrail, AWS Config, CloudFormation, Systems Manager, Budgets & Cost Explorer, Trusted Advisor & Well-Architected, Organizations |
+| Công cụ phát triển | CodePipeline + CodeBuild + CodeDeploy, X-Ray (dạy bằng OpenTelemetry) |
 | Bảo mật | IAM, IAM Identity Center, Cognito, KMS, Secrets Manager, ACM, WAF, Shield, GuardDuty (kèm Inspector, Macie, Security Hub) |
 
 Cột phải giải thích dịch vụ: là gì, ví dụ đời thường, khi nào dùng, khái niệm chính, cách tính tiền, và nút **Thử trong Sandbox**.
@@ -27,7 +28,7 @@ Phím tắt: `←` / `→` chuyển bước, `Space` chạy / tạm dừng.
 
 ### 2. Sandbox kiến trúc
 
-- Chọn mẫu kiến trúc (1 server, Web + Database, Chịu lỗi cao, Chịu lỗi + CDN, Serverless) hoặc tự bật/tắt từng thành phần: Route 53, CloudFront, Load Balancer, Auto Scaling, số EC2 mỗi AZ, vị trí EC2 (public / private subnet), NAT Gateway (không / 1 cái / mỗi AZ / Regional — một NAT cho cả VPC, tự có mặt ở từng AZ có EC2), VPC Endpoint (EC2 private tới S3, SQS không qua NAT), SQS + Lambda worker (xử lý đơn hàng nền), S3, RDS (Single/Multi-AZ), ElastiCache (đặt trước RDS), DynamoDB, AWS Backup (sao lưu + khôi phục về thời điểm), API Gateway + Lambda, AWS WAF, AWS Shield, Amazon GuardDuty, AWS Budgets (ngân sách $200 / $1.000 / $5.000 mỗi tháng — cảnh báo khi chi phí dự báo vượt 80% và 100%).
+- Chọn mẫu kiến trúc (1 server, Web + Database, Chịu lỗi cao, Chịu lỗi + CDN, Serverless) hoặc tự bật/tắt từng thành phần: Route 53, CloudFront, Load Balancer, Auto Scaling, số EC2 mỗi AZ, vị trí EC2 (public / private subnet), NAT Gateway (không / 1 cái / mỗi AZ / Regional — một NAT cho cả VPC, tự có mặt ở từng AZ có EC2), VPC Endpoint (EC2 private tới S3, SQS không qua NAT), SQS + Lambda worker (xử lý đơn hàng nền), S3, RDS (Single/Multi-AZ), ElastiCache (đặt trước RDS), DynamoDB, AWS Backup (sao lưu + khôi phục về thời điểm), API Gateway + Lambda, canary + tự rollback (bản mới nhận 10% traffic trước, alarm 5xx thì quay lại), AWS WAF, AWS Shield, Amazon GuardDuty, AWS Budgets (ngân sách $200 / $1.000 / $5.000 mỗi tháng — cảnh báo khi chi phí dự báo vượt 80% và 100%).
 - Thả sự kiện để xem điều gì xảy ra:
   - **Động đất**: phá huỷ AZ A hoặc AZ B (nứt nền, khói bụi, server đổ).
   - **Server hỏng**: một EC2 cháy nguồn.
@@ -38,6 +39,7 @@ Phím tắt: `←` / `→` chuyển bước, `Space` chạy / tạm dừng.
   - **Thanh toán sập**: API của đối tác thanh toán, email ngừng 20 giây — có SQS thì đơn hàng nằm chờ thay vì lỗi.
   - **Xoá nhầm dữ liệu**: bản deploy lỗi chạy lệnh DELETE — Multi-AZ không cứu được, chỉ AWS Backup khôi phục được.
   - **Lộ access key**: key dài hạn bị đẩy lên GitHub, kẻ gian bật máy GPU đào coin — website vẫn chạy, chỉ hoá đơn tăng. Có GuardDuty thì bị chặn sau vài giây; chỉ có Budgets thì biết muộn khi tiền đã mất; không có gì thì đợi tới hoá đơn.
+  - **Deploy lỗi**: bản v2 trả lỗi 500 cho mọi request động. Deploy một lần thì lỗi tới mọi người dùng cho tới khi có người deploy lại bản cũ; có canary + alarm thì chỉ khoảng 10% request bị ảnh hưởng trong vài giây.
   - **Đêm khuya**: chỉ còn 500 người, trời tối.
   - **Phục hồi**: sửa mọi thứ.
 - Theo dõi trạng thái website, request/giây, tỉ lệ thành công, độ trễ, số máy, chi phí ước tính (và % ngân sách khi bật AWS Budgets, số đơn chờ trong SQS), biểu đồ 60 giây và nhật ký giải thích bằng lời.
@@ -74,7 +76,7 @@ Thêm `?fx=low` vào URL để chạy chế độ đồ hoạ nhẹ (tắt bloom
 ```
 src/
   sim/            mô phỏng (JS thuần, test được bằng Node)
-    simulation.js   định tuyến traffic, health check, Auto Scaling, RDS failover, ElastiCache, Lambda, DDoS / SQL injection, SQS, VPC Endpoint, AWS Backup, GuardDuty & lộ access key, chi phí, AWS Budgets
+    simulation.js   định tuyến traffic, health check, Auto Scaling, RDS failover, ElastiCache, Lambda, DDoS / SQL injection, SQS, VPC Endpoint, AWS Backup, GuardDuty & lộ access key, deploy canary, chi phí, AWS Budgets
     lessons.js      chấm điểm sự kiện → thẻ bài học + gợi ý; chấm điểm Well-Architected 6 trụ cột
     presets.js      các mẫu kiến trúc
     constants.js    công suất, thời gian, giá minh hoạ
@@ -109,6 +111,7 @@ test/
 - SQL injection: trong 20 giây, 45% request động mang mã SQL độc hại nhắm vào RDS. WAF chặn ~95%; Shield không giúp vì không đọc nội dung request; DynamoDB không dùng SQL nên không bị ảnh hưởng.
 - WAF tính tiền theo giờ + theo request; Shield Standard miễn phí (Shield Advanced không mô phỏng).
 - Lộ access key: 6 máy GPU đào coin, khoảng $400/giờ. GuardDuty ra finding sau 3 giây, Lambda khoá key và dừng máy sau 2 giây nữa (thực tế khoảng 15 phút). Không có GuardDuty: dữ liệu chi phí tới AWS Budgets chậm 12 giây mô phỏng (thực tế vài giờ), và Budgets chỉ cảnh báo, không tự dừng máy.
+- Deploy lỗi: bản mới trả 500 cho mọi request động nó phục vụ. Deploy một lần: lên hết trong 2 giây mô phỏng, người trực phát hiện sau 12 giây (thực tế 15–30 phút) và deploy lại bản cũ trong 4 giây. Canary: bản mới chỉ nhận 10% traffic (ALB chia theo trọng số cho EC2, alias Lambda cho serverless — cần Load Balancer nếu dùng EC2), alarm 5xx kêu sau 3 giây (thực tế 1–3 phút) và traffic quay về bản cũ trong 1 giây. Health check vẫn xanh suốt sự cố.
 - S3, DynamoDB, Lambda, API Gateway, CloudFront không bị ảnh hưởng khi một AZ sập.
 
 ## Thêm một dịch vụ / bài học

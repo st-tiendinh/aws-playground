@@ -606,10 +606,53 @@ test('a leaked access key: GuardDuty stops the miners, Budgets only notices late
   assert.equal(none.s.leak.active, false);
 });
 
+test('bad deploy all at once: every dynamic request fails until someone rolls back by hand', () => {
+  const s = sim('ha');
+  s.run(3);
+  const lt = runScenario(s, 'badDeploy');
+  assert.equal(lt.grade, 'fail');
+  const types = s.events.map((e) => e.type);
+  for (const t of ['deployStart', 'deployLive', 'deployManual', 'deployRolledBack']) assert.ok(types.includes(t), t);
+  assert.ok(lt.suggestions.some((x) => x.patch.canary));
+  assert.equal(s.deploy.active, false);
+  // repair in the middle of a rollout puts the old version back at once
+  s.trigger('badDeploy');
+  s.run(4);
+  assert.ok(s.deploy.share > 0.9);
+  s.trigger('repair');
+  s.run(1);
+  assert.equal(s.deploy.active, false);
+  assert.equal(s.deploy.share, 0);
+});
+
+test('bad deploy with a canary: 10% of traffic sees the bug and the 5xx alarm rolls it back', () => {
+  for (const preset of ['ha', 'serverless']) {
+    const s = sim(preset, { canary: true });
+    s.run(3);
+    assert.ok(s.trigger('badDeploy') !== false);
+    let min = 1;
+    for (let k = 0; k < 600 && !s.lesson; k++) {
+      s.run(0.1);
+      min = Math.min(min, s.metrics.success);
+    }
+    assert.equal(s.lesson.grade, 'pass', preset);
+    assert.ok(min > 0.9, `${preset}: success fell to ${min}`);
+    const start = s.events.find((e) => e.type === 'deployStart');
+    const back = s.events.find((e) => e.type === 'deployRolledBack');
+    assert.ok(back && back.t - start.t <= 5, 'rolled back within seconds');
+  }
+});
+
+test('a canary splits traffic by weight: it needs a load balancer in front of EC2', () => {
+  assert.equal(normalizeConfig({ canary: true }).canary, false);
+  assert.equal(normalizeConfig({ canary: true, elb: true }).canary, true);
+  assert.equal(normalizeConfig({ compute: 'lambda', canary: true }).canary, true);
+});
+
 test('Well-Architected score rises as weak spots are fixed', () => {
   const avg = (c) => wellArchitected(normalizeConfig(c)).reduce((n, p) => n + p.score, 0) / 6;
   const weak = avg({});
-  const strong = avg({ route53: true, cloudfront: true, s3: true, elb: true, asg: true, appSubnet: 'private', nat: 'perAz', vpce: true, database: 'rds', rdsMultiAz: true, cache: true, waf: true, shield: true, guardduty: true, budget: 1000, queue: true, backup: true });
+  const strong = avg({ route53: true, cloudfront: true, s3: true, elb: true, asg: true, appSubnet: 'private', nat: 'perAz', vpce: true, database: 'rds', rdsMultiAz: true, cache: true, waf: true, shield: true, guardduty: true, budget: 1000, queue: true, backup: true, canary: true });
   assert.ok(strong > weak + 40, `${weak} → ${strong}`);
   for (const p of wellArchitected(normalizeConfig({}))) for (const x of p.checks) if (x.patch) assert.ok(typeof x.patch === 'object');
 });

@@ -313,6 +313,35 @@ const GLYPH = {
       <path d="M2.5 17c2.4-1.9 4.6 1.9 7 0s4.6 1.9 7 0 3.4-1.4 5-.8" />
     </>
   ),
+  eks: (
+    <>
+      <path d="M12 3l7.5 4.3v8.6L12 20.2l-7.5-4.3V7.3z" />
+      <circle cx="12" cy="11.6" r="2.3" />
+      <path d="M12 6.4v2.9M12 13.9v2.9M7.5 9l2.5 1.4M14 12.8l2.5 1.4M7.5 14.2l2.5-1.4M14 10.4l2.5-1.4" />
+    </>
+  ),
+  beanstalk: (
+    <>
+      <path d="M12 21V10" />
+      <path d="M12 14c-3.6 0-6-2.3-6-5.6 3.6 0 6 2.3 6 5.6z" />
+      <path d="M12 10.5c0-3.3 2.4-5.6 6-5.6 0 3.3-2.4 5.6-6 5.6z" />
+      <path d="M8 21h8" />
+    </>
+  ),
+  codepipeline: (
+    <>
+      <rect x="2.5" y="9" width="5" height="6" rx="1.2" />
+      <rect x="9.5" y="9" width="5" height="6" rx="1.2" />
+      <rect x="16.5" y="9" width="5" height="6" rx="1.2" />
+      <path d="M7.5 12h2M14.5 12h2" />
+    </>
+  ),
+  xray: (
+    <>
+      <path d="M4 4v16" />
+      <path d="M4 6.5h11M7 10.5h13M7 14.5h5M10 18.5h7" />
+    </>
+  ),
   users: (
     <>
       <circle cx="9" cy="8" r="3" />
@@ -332,7 +361,7 @@ export function Glyph({ name, size = 18, stroke = 1.8 }) {
 }
 
 // model kinds without a lesson of their own take the colour of the lesson that explains them
-const KIND_TO_SERVICE = { edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
+const KIND_TO_SERVICE = { pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
 const SPECIAL = { users: ['#0ea5e9', 'users'], user: ['#0ea5e9', 'users'], external: ['#0891b2', 'foundation'] };
 
 export function ServiceIcon({ id, size = 34, glyph }) {
@@ -495,6 +524,12 @@ const UI = {
   chevronDown: <path d="M6 9l6 6 6-6" />,
   chevronUp: <path d="M6 15l6-6 6 6" />,
   bolt: <path d="M13 2.5L5 13.5h6l-1 8 8-11h-6z" />,
+  bug: (
+    <>
+      <path d="M8 10a4 4 0 0 1 8 0v4.5a4 4 0 0 1-8 0z" />
+      <path d="M12 10v8.5M4 12.5h4M16 12.5h4M5 7.5l3 2M19 7.5l-3 2M5 18.5l3-2M19 18.5l-3-2M10 6.5L8.5 4M14 6.5L15.5 4" />
+    </>
+  ),
   trace: (
     <>
       <circle cx="5" cy="18" r="2" />

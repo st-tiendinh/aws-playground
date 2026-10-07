@@ -120,6 +120,15 @@ const FACTORY = {
   advisor: (o) => new TokenModel({ kind: 'advisor', category: 'management', color: '#1e40af', shape: 'cube', text: 'Advisor', fontSize: 56, glow: true, size: 1.4, ...o }),
   miner: (o) => new TokenModel({ kind: 'miner', category: 'compute', color: '#7f1d1d', shape: 'cube', text: 'Miner', fontSize: 62, glow: true, size: 1.0, ...o }),
   param: (o) => new TokenModel({ kind: 'param', category: 'management', color: '#1d4ed8', shape: 'card', text: 'Param', fontSize: 66, glow: true, size: 1.2, ...o }),
+  // containers & PaaS: the EKS control plane, Kubernetes pods, Elastic Beanstalk
+  eks: (o) => new TokenModel({ kind: 'eks', category: 'compute', color: CAT_COLOR.compute, shape: 'cube', text: 'EKS', fontSize: 84, glow: true, size: 1.4, ...o }),
+  pod: (o) => new TokenModel({ kind: 'pod', category: 'compute', color: '#c2410c', shape: 'cube', text: 'Pod', fontSize: 70, glow: true, size: 0.75, ...o }),
+  beanstalk: (o) => new TokenModel({ kind: 'beanstalk', category: 'compute', color: '#b45309', shape: 'cube', text: 'Beanstalk', fontSize: 40, glow: true, size: 1.4, ...o }),
+  // developer tools: the CI/CD pipeline and its build / deploy stages, X-Ray tracing
+  codepipeline: (o) => new TokenModel({ kind: 'codepipeline', category: 'devtools', color: CAT_COLOR.devtools, shape: 'cube', text: 'Pipeline', fontSize: 46, glow: true, size: 1.4, ...o }),
+  codebuild: (o) => new TokenModel({ kind: 'codebuild', category: 'devtools', color: '#0f766e', shape: 'cube', text: 'Build', fontSize: 62, glow: true, size: 1.2, ...o }),
+  codedeploy: (o) => new TokenModel({ kind: 'codedeploy', category: 'devtools', color: '#115e59', shape: 'cube', text: 'Deploy', fontSize: 54, glow: true, size: 1.2, ...o }),
+  xray: (o) => new TokenModel({ kind: 'xray', category: 'devtools', color: CAT_COLOR.devtools, shape: 'cube', text: 'X-Ray', fontSize: 62, glow: true, size: 1.4, ...o }),
 };
 
 export function createModel(kind, opts = {}) {

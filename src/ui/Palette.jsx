@@ -89,6 +89,7 @@ function warnings(c) {
   if (c.database === 'rds' && !c.waf) w.push('Chưa bật AWS WAF: request chứa mã SQL độc hại có thể đi thẳng tới RDS.');
   if (!c.backup && (c.database !== 'none' || ec2)) w.push('Chưa có AWS Backup: lỡ xoá nhầm dữ liệu là mất luôn — Multi-AZ cũng không cứu được trường hợp này.');
   if (!c.guardduty) w.push('Chưa bật GuardDuty: access key bị lộ có thể bị dùng để đào coin hàng giờ mà không ai hay.');
+  if (!c.canary) w.push('Deploy kiểu một lần: bản có lỗi chạy trên mọi máy cùng lúc — bật canary + tự rollback để chỉ khoảng 10% traffic gặp lỗi.');
   if (!c.budget) w.push('Chưa đặt AWS Budgets: chi phí tăng vọt (ví dụ khi 1 triệu người ùa vào) chỉ lộ ra khi nhận hoá đơn.');
   return w;
 }
@@ -261,6 +262,19 @@ export function Palette() {
           <span className="badge-on">Bật</span>
         </Row>
       )}
+
+      <h3 className="group-title" style={{ '--c': CATEGORIES.devtools.color }}>
+        Triển khai
+      </h3>
+      <Row
+        id="canary"
+        sid="codepipeline"
+        title="Canary + tự rollback"
+        desc={!c.canary ? 'đang tắt: deploy một lần lên mọi máy' : ec2 ? 'ALB chia 10% cho bản mới, alarm 5xx thì quay lại' : 'CodeDeploy chia 10% cho bản mới, alarm 5xx thì quay lại'}
+        hoverKey={ec2 ? 'elb' : 'lambda'}
+      >
+        <Toggle on={c.canary} onChange={(v) => set(v && ec2 && !c.elb ? { canary: true, elb: true } : { canary: v })} label="Canary + tự rollback" />
+      </Row>
 
       <h3 className="group-title" style={{ '--c': CATEGORIES.integration.color }}>
         Xử lý nền

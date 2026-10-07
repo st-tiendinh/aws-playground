@@ -14,6 +14,9 @@ function live(p, snap, config) {
   const rows = [];
   if (p.key === 'worker') {
     rows.push(['Đang xử lý', `${Math.round(snap.queue?.outRate || 0)} đơn/giây`], ['Đối tác thanh toán', snap.extDown ? 'đang sập — chờ thử lại' : 'hoạt động']);
+  } else if (p.key === 'canary' || p.key === 'lambdaV2') {
+    // the new release while it is being canary-tested
+    rows.push(['Phiên bản', 'v2 (đang thử canary)'], ['Nhận traffic', fmtPct(snap.deploy.share)], ['Kết quả', snap.deploy.phase === 'rollback' ? 'alarm 5xx → đang rollback' : 'request động trả lỗi 500']);
   } else if (p.kind === 'sqs' && snap.queue) {
     rows.push(['Tin đang chờ', Math.round(snap.queue.depth).toLocaleString('vi-VN')], ['Vào hàng đợi', `${Math.round(snap.queue.inRate)} /giây`], ['Worker xử lý', `${Math.round(snap.queue.outRate)} /giây`]);
   } else if (p.kind === 'vpce') {
