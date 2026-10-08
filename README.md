@@ -8,18 +8,20 @@ Dự án học tập độc lập, không liên kết với Amazon Web Services.
 
 ### 1. Học từng dịch vụ
 
-Chọn một dịch vụ ở cột trái để xem luồng hoạt động của nó qua 6–14 bước có hoạt hình 3D, kèm lời giải thích:
+Chọn một dịch vụ ở cột trái để xem luồng hoạt động của nó qua 6–14 bước có hoạt hình 3D, kèm lời giải thích. Bài đầu tiên, **Cloud là gì**, dành cho người chưa biết gì về cloud:
 
 | Nhóm | Dịch vụ |
 | --- | --- |
-| Nền tảng | Region & Availability Zone, Mô hình trách nhiệm chung (Shared Responsibility) |
+| Nền tảng | Cloud là gì (6 lợi ích của cloud, IaaS / PaaS / SaaS, cloud / hybrid / on-premises, Console / CLI / SDK / IaC, AWS CAF), Region & Availability Zone (kèm Local Zone Hà Nội, Wavelength, Outposts, edge location), Mô hình trách nhiệm chung (Shared Responsibility) |
 | Tính toán | EC2, Auto Scaling, Lambda, ECS + Fargate, EKS, Elastic Beanstalk |
-| Lưu trữ | S3, EBS, EFS, AWS Backup, Chiến lược DR & Elastic Disaster Recovery (kèm Global Accelerator) |
-| Cơ sở dữ liệu | RDS, Aurora, DynamoDB, ElastiCache |
+| Lưu trữ | S3, EBS, EFS, Amazon FSx (Windows File Server, Lustre, NetApp ONTAP, OpenZFS), AWS Storage Gateway (S3 File, Volume, Tape Gateway), AWS Backup, Chiến lược DR & Elastic Disaster Recovery (kèm Global Accelerator) |
+| Cơ sở dữ liệu | RDS, Aurora, DynamoDB, ElastiCache, Database chuyên dụng (DocumentDB, Neptune, Keyspaces, kèm MemoryDB, Timestream) |
 | Mạng | Elastic Load Balancing, CloudFront, Route 53, VPC (gồm Internet Gateway, route table, Security Group & Network ACL, NAT Gateway, VPC Endpoint & PrivateLink, Flow Logs, VPC Peering), Transit Gateway, Site-to-Site VPN & Direct Connect |
 | Tích hợp | API Gateway, SQS, SNS, EventBridge, Step Functions |
 | Phân tích dữ liệu | Kinesis Data Streams (kèm Data Firehose), Athena + Glue (data lake trên S3, Parquet, partition, Lake Formation), Redshift + Quick Sight (OLTP / OLAP, Serverless, zero-ETL từ Aurora, Spectrum), OpenSearch (chỉ mục ngược, gõ sai vẫn tìm được, phân tích log) |
-| Giám sát & quản trị | CloudWatch, CloudTrail, AWS Config, CloudFormation, Systems Manager, Budgets & Cost Explorer, Trusted Advisor & Well-Architected, Organizations |
+| AI & Machine Learning | AI dựng sẵn (Rekognition, Textract, Transcribe, Comprehend, Translate, Polly, Lex), SageMaker AI (kèm Bedrock, Amazon Q) |
+| Di chuyển & truyền dữ liệu | 7R & Application Migration Service (MGN), AWS DMS (kèm Schema Conversion), DataSync, Transfer Family & Snowball |
+| Giám sát & quản trị | CloudWatch, CloudTrail, AWS Config, CloudFormation, Systems Manager, Budgets & Cost Explorer (kèm Pricing Calculator, Cost and Usage Report), Trusted Advisor & Well-Architected (kèm 4 gói AWS Support, re:Post, Marketplace, Partner Network, Professional Services), Organizations |
 | Công cụ phát triển | CodePipeline + CodeBuild + CodeDeploy, X-Ray (dạy bằng OpenTelemetry) |
 | Bảo mật | IAM, IAM Identity Center, Cognito, KMS, Secrets Manager, ACM, WAF, Shield, GuardDuty (kèm Inspector, Macie, Security Hub) |
 

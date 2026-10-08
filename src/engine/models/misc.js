@@ -3,7 +3,8 @@
 // AMIs, messages…) and the explore-only services: CloudWatch, SQS, IAM, EBS, KMS,
 // CloudTrail, EventBridge, CloudFormation, AWS Budgets, ACM, Step Functions, EFS, ECR,
 // Aurora, Network ACL, Kinesis Data Streams, Systems Manager, AWS Backup — and the Shared
-// Responsibility Model stack. (More analytics models live in analytics.js.)
+// Responsibility Model stack. (More analytics models live in analytics.js; server racks and the
+// 5G mast in infra.js.)
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { CAT_COLOR, COLOR } from '../palette.js';
@@ -1406,6 +1407,8 @@ const OWNER = {
   aws: { color: '#f59e0b', tag: 'AWS' },
   you: { color: '#3b82f6', tag: 'BẠN' },
   both: { color: '#a855f7', tag: 'CHUNG' },
+  // the company selling a SaaS product runs every layer under your data
+  vendor: { color: '#f59e0b', tag: 'HÃNG' },
 };
 
 function layerTexture(text, owner) {

@@ -2,7 +2,8 @@
 // icon categories (compute orange, storage green, database magenta, networking purple…),
 // except management: AWS paints it the same pink as integration, blue keeps the two apart —
 // developer tools, teal here so they stand apart from both — and analytics: AWS paints it the
-// same purple as networking, gold here.
+// same purple as networking, gold here. Migration gets a green of its own, cooler than storage, and
+// AI / machine learning an indigo between management blue and networking purple.
 export const CAT_COLOR = {
   foundation: '#64748b',
   compute: '#ED7100',
@@ -11,6 +12,8 @@ export const CAT_COLOR = {
   network: '#8C4FFF',
   integration: '#E7157B',
   analytics: '#CA9A0C',
+  ai: '#4F46E5',
+  migration: '#16A34A',
   management: '#3B82F6',
   devtools: '#0D9488',
   security: '#DD344C',

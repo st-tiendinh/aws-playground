@@ -4,7 +4,7 @@
 // jumping to step N rebuilds the state from the persistent actions of steps 0…N-1.
 import * as THREE from 'three';
 import { Fx } from './fx.js';
-import { createModel } from './models/index.js';
+import { createModel, PLATFORM_KINDS } from './models/index.js';
 import { COLOR } from './palette.js';
 
 const PERSISTENT = new Set(['state', 'show', 'hide', 'ghost', 'label', 'load', 'count', 'break', 'fix', 'quake']);
@@ -52,7 +52,7 @@ export class ExploreScene {
     for (const n of flow.nodes) {
       const m = createModel(n.kind, { ...n, id: n.id, position: n.pos });
       if (n.label) {
-        m.setLabel(n.label, n.sub || '', { small: n.small, zone: n.zone || n.kind === 'az' || n.kind === 'zone', y: n.labelY });
+        m.setLabel(n.label, n.sub || '', { small: n.small, zone: n.zone || PLATFORM_KINDS.has(n.kind), y: n.labelY });
         if (n.labelPos) m.label.position.set(...n.labelPos);
       }
       this._put(n.id, m, n);
@@ -200,7 +200,7 @@ export class ExploreScene {
       }
       m.setGhost(s.ghost);
       if (s.title) {
-        m.setLabel(s.title, s.sub, { zone: m.kind === 'az' || m.kind === 'zone', small: this.defs.get(id)?.small });
+        m.setLabel(s.title, s.sub, { zone: PLATFORM_KINDS.has(m.kind), small: this.defs.get(id)?.small });
         const def = this.defs.get(id);
         if (def?.labelPos) m.label.position.set(...def.labelPos);
         m.setLabelVisible(this.labelsOn);
@@ -230,7 +230,7 @@ export class ExploreScene {
   }
 
   _failFx(id, m, failed) {
-    if (m.kind === 'az' || m.kind === 'zone') {
+    if (PLATFORM_KINDS.has(m.kind)) {
       for (let k = 0; k < 2; k++) {
         const key = `quake:${id}:${k}`;
         if (!failed) {
@@ -420,7 +420,7 @@ export class ExploreScene {
         break;
       case 'label':
         if (node) {
-          if (a.title !== undefined) node.setLabel(a.title, a.sub ?? node._labelSub ?? '', { zone: node.kind === 'az' || node.kind === 'zone', small: this.defs.get(a.node)?.small });
+          if (a.title !== undefined) node.setLabel(a.title, a.sub ?? node._labelSub ?? '', { zone: PLATFORM_KINDS.has(node.kind), small: this.defs.get(a.node)?.small });
           else if (a.sub !== undefined) node.setLabelSub(a.sub);
           const def = this.defs.get(a.node);
           if (def?.labelPos) node.label.position.set(...def.labelPos);

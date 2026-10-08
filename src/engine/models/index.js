@@ -31,6 +31,8 @@ import {
   ZoneModel,
 } from './misc.js';
 import { BoardModel, DashboardModel, RedshiftModel, TableModel } from './analytics.js';
+import { FSxModel, GatewayModel, GraphModel } from './datastores.js';
+import { RackModel, TowerModel } from './infra.js';
 import {
   CloudFrontModel,
   DynamoDBModel,
@@ -151,7 +153,57 @@ const FACTORY = {
   quicksight: (o) => new DashboardModel(o),
   osdash: (o) => new DashboardModel({ kind: 'osdash', chart: 'line', title: 'Log lỗi 5xx', ...o }),
   opensearch: (o) => new TokenModel({ kind: 'opensearch', category: 'analytics', color: '#a87e06', shape: 'cube', text: 'OpenSearch', fontSize: 40, glow: true, size: 1.5, ...o }),
+  // cloud basics & global infrastructure: your own server room and its racks, a Local Zone in a
+  // city, a Wavelength Zone inside a 5G network (and the mast), an Outposts rack on your premises
+  onprem: (o) => new ZoneModel({ kind: 'onprem', top: '#e7e5e4', side: '#a8a29e', ...o }),
+  server: (o) => new RackModel(o),
+  localzone: (o) => new ZoneModel({ kind: 'localzone', top: '#dbeafe', side: '#93c5fd', ...o }),
+  wavelength: (o) => new ZoneModel({ kind: 'wavelength', top: '#cffafe', side: '#67e8f9', ...o }),
+  tower: (o) => new TowerModel(o),
+  outposts: (o) => new RackModel({ kind: 'outposts', category: 'compute', ...o }),
+  // cost tools: estimate before building, the detailed billing export
+  pricing: (o) => new TokenModel({ kind: 'pricing', category: 'management', color: '#1d4ed8', shape: 'cube', text: 'Calc', fontSize: 80, glow: true, size: 1.3, ...o }),
+  cur: (o) => new TokenModel({ kind: 'cur', category: 'management', color: '#1e40af', shape: 'card', text: 'CUR', fontSize: 92, glow: true, size: 1.3, ...o }),
+  // file storage and hybrid storage: an FSx file server, the Storage Gateway appliance, a virtual tape
+  fsx: (o) => new FSxModel(o),
+  storagegateway: (o) => new GatewayModel(o),
+  tape: (o) => new TokenModel({ kind: 'tape', category: 'storage', color: '#3f6212', shape: 'cube', text: 'Tape', fontSize: 84, size: 0.9, ...o }),
+  // purpose-built databases: document, graph, wide-column (Cassandra), durable in-memory, time series
+  docdb: (o) => new TokenModel({ kind: 'docdb', category: 'database', color: '#a21caf', shape: 'cube', text: 'DocDB', fontSize: 64, glow: true, size: 1.4, ...o }),
+  neptune: (o) => new GraphModel(o),
+  keyspaces: (o) => new TokenModel({ kind: 'keyspaces', category: 'database', color: '#86198f', shape: 'cube', text: 'Keyspaces', fontSize: 42, glow: true, size: 1.4, ...o }),
+  memorydb: (o) => new TokenModel({ kind: 'memorydb', category: 'database', color: '#c026d3', shape: 'cube', text: 'MemoryDB', fontSize: 44, glow: true, size: 1.3, ...o }),
+  timestream: (o) => new TokenModel({ kind: 'timestream', category: 'database', color: '#701a75', shape: 'cube', text: 'Timestream', fontSize: 38, glow: true, size: 1.3, ...o }),
+  // migration & transfer: MGN with its replication agent and staging area, DMS and schema
+  // conversion, DataSync, Transfer Family (SFTP) and a Snowball device
+  mgn: (o) => new TokenModel({ kind: 'mgn', category: 'migration', color: CAT_COLOR.migration, shape: 'cube', text: 'MGN', fontSize: 92, glow: true, size: 1.4, ...o }),
+  agent: (o) => new TokenModel({ kind: 'agent', category: 'migration', color: '#166534', shape: 'disc', text: 'agent', fontSize: 64, glow: true, size: 0.9, ...o }),
+  dsagent: (o) => new TokenModel({ kind: 'dsagent', category: 'migration', color: '#166534', shape: 'disc', text: 'agent', fontSize: 64, glow: true, size: 0.9, ...o }),
+  staging: (o) => new ZoneModel({ kind: 'staging', category: 'migration', top: '#dcfce7', side: '#86efac', ...o }),
+  dms: (o) => new TokenModel({ kind: 'dms', category: 'migration', color: CAT_COLOR.migration, shape: 'cube', text: 'DMS', fontSize: 96, glow: true, size: 1.4, ...o }),
+  sct: (o) => new TokenModel({ kind: 'sct', category: 'migration', color: '#15803d', shape: 'card', text: 'Schema', fontSize: 56, glow: true, size: 1.3, ...o }),
+  datasync: (o) => new TokenModel({ kind: 'datasync', category: 'migration', color: CAT_COLOR.migration, shape: 'cube', text: 'DataSync', fontSize: 46, glow: true, size: 1.4, ...o }),
+  transfer: (o) => new TokenModel({ kind: 'transfer', category: 'migration', color: '#15803d', shape: 'cube', text: 'SFTP', fontSize: 84, glow: true, size: 1.3, ...o }),
+  snowball: (o) => new TokenModel({ kind: 'snowball', category: 'migration', color: '#334155', shape: 'cube', text: 'Snowball', fontSize: 46, size: 1.3, ...o }),
+  // AI services ready to call, and the parts of building your own model (SageMaker AI) or using
+  // foundation models (Bedrock, Amazon Q)
+  rekognition: (o) => new TokenModel({ kind: 'rekognition', category: 'ai', color: '#4338ca', shape: 'cube', text: 'Rekognition', fontSize: 34, glow: true, size: 1.4, ...o }),
+  textract: (o) => new TokenModel({ kind: 'textract', category: 'ai', color: '#4f46e5', shape: 'cube', text: 'Textract', fontSize: 44, glow: true, size: 1.4, ...o }),
+  transcribe: (o) => new TokenModel({ kind: 'transcribe', category: 'ai', color: '#3730a3', shape: 'cube', text: 'Transcribe', fontSize: 36, glow: true, size: 1.4, ...o }),
+  comprehend: (o) => new TokenModel({ kind: 'comprehend', category: 'ai', color: '#4338ca', shape: 'cube', text: 'Comprehend', fontSize: 34, glow: true, size: 1.4, ...o }),
+  translate: (o) => new TokenModel({ kind: 'translate', category: 'ai', color: '#4f46e5', shape: 'cube', text: 'Translate', fontSize: 40, glow: true, size: 1.4, ...o }),
+  polly: (o) => new TokenModel({ kind: 'polly', category: 'ai', color: '#3730a3', shape: 'cube', text: 'Polly', fontSize: 64, glow: true, size: 1.4, ...o }),
+  lex: (o) => new TokenModel({ kind: 'lex', category: 'ai', color: '#4338ca', shape: 'cube', text: 'Lex', fontSize: 90, glow: true, size: 1.4, ...o }),
+  sagemaker: (o) => new TokenModel({ kind: 'sagemaker', category: 'ai', color: CAT_COLOR.ai, shape: 'cube', text: 'SageMaker', fontSize: 36, glow: true, size: 1.5, ...o }),
+  notebook: (o) => new TokenModel({ kind: 'notebook', category: 'ai', color: '#312e81', shape: 'card', text: 'Notebook', fontSize: 50, size: 1.3, ...o }),
+  mlmodel: (o) => new TokenModel({ kind: 'mlmodel', category: 'ai', color: '#6d28d9', shape: 'disc', text: 'model', fontSize: 72, glow: true, size: 1.1, ...o }),
+  endpoint: (o) => new TokenModel({ kind: 'endpoint', category: 'ai', color: '#4338ca', shape: 'cube', text: 'Endpoint', fontSize: 44, glow: true, size: 1.3, ...o }),
+  bedrock: (o) => new TokenModel({ kind: 'bedrock', category: 'ai', color: '#1e1b4b', shape: 'cube', text: 'Bedrock', fontSize: 48, glow: true, size: 1.5, ...o }),
+  amazonq: (o) => new TokenModel({ kind: 'amazonq', category: 'ai', color: '#5b21b6', shape: 'cube', text: 'Q', fontSize: 120, glow: true, size: 1.2, ...o }),
 };
+
+// flat platforms (AZ, Region, data centres…): zone-style labels, no hover glow, smoke when destroyed
+export const PLATFORM_KINDS = new Set(['az', 'zone', 'onprem', 'localzone', 'wavelength', 'staging']);
 
 export function createModel(kind, opts = {}) {
   const make = FACTORY[kind];
