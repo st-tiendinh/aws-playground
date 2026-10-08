@@ -3,6 +3,47 @@
 import { CATEGORIES, serviceById } from '../data/services.js';
 
 const GLYPH = {
+  cloud: <path d="M6.5 19h11a4.5 4.5 0 0 0 .9-8.9 6 6 0 0 0-11.6 1.4A3.8 3.8 0 0 0 6.5 19z" />,
+  // your own server room, and a rack of servers in it
+  onprem: <path d="M3.5 20V9.5L12 4.5l8.5 5V20M2.5 20h19M9 20v-5h6v5M8 11h2M14 11h2" />,
+  server: (
+    <>
+      <rect x="6" y="3" width="12" height="18" rx="1.5" />
+      <path d="M9 7.5h6M9 11.5h6M9 15.5h6" />
+    </>
+  ),
+  outposts: (
+    <>
+      <rect x="6" y="3" width="12" height="18" rx="1.5" />
+      <path d="M6 7h12M9 11h6M9 14.5h6M9 18h3" />
+    </>
+  ),
+  localzone: (
+    <>
+      <path d="M12 21s-6-5.6-6-10.5a6 6 0 0 1 12 0C18 15.4 12 21 12 21z" />
+      <circle cx="12" cy="10.5" r="2.2" />
+    </>
+  ),
+  wavelength: (
+    <>
+      <path d="M12 21v-9.5M9 21h6" />
+      <circle cx="12" cy="9" r="1.5" />
+      <path d="M8.8 5.8a4.5 4.5 0 0 0 0 6.4M15.2 5.8a4.5 4.5 0 0 1 0 6.4M6 3a8.5 8.5 0 0 0 0 12M18 3a8.5 8.5 0 0 1 0 12" />
+    </>
+  ),
+  pricing: (
+    <>
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+      <rect x="8" y="6" width="8" height="3.5" rx="0.6" />
+      <path d="M8.5 13h.01M12 13h.01M15.5 13h.01M8.5 16.5h.01M12 16.5h.01M15.5 16.5h.01" strokeWidth="2.4" />
+    </>
+  ),
+  cur: (
+    <>
+      <path d="M6 3h8.5L19 7.5V21H6z" />
+      <path d="M14 3v5h5M9 12h7M9 15h7M9 18h4" />
+    </>
+  ),
   foundation: (
     <>
       <circle cx="12" cy="12" r="8" />
@@ -54,6 +95,63 @@ const GLYPH = {
       <path d="M4.5 12a7.5 7.5 0 1 0 2.2-5.3" />
       <path d="M4 3.5v3.7h3.7" />
       <path d="M12 8v4.2l3 1.8" />
+    </>
+  ),
+  // FSx: a managed file server (folder in a box); Storage Gateway: your building feeding the cloud
+  fsx: (
+    <>
+      <path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z" />
+      <path d="M8 12.5h8M8 15.5h5" />
+    </>
+  ),
+  storagegateway: (
+    <>
+      <path d="M3 20v-9l5-3 5 3v9M2 20h12M6.5 20v-4h3v4" />
+      <path d="M15 12.5h6.5M18.5 9.5l3 3-3 3" />
+    </>
+  ),
+  // migration: servers moving from your building into the cloud; a database copied across;
+  // data on its way (DataSync, Transfer Family, Snowball)
+  migrate: (
+    <>
+      <path d="M2.5 20v-8l4.5-3 4.5 3v8M1.5 20h11" />
+      <path d="M14.5 13.5h6.5a2.5 2.5 0 0 0 0-5 4 4 0 0 0-7.6-1" />
+      <path d="M12 17h7M16.5 14.5l2.5 2.5-2.5 2.5" />
+    </>
+  ),
+  dms: (
+    <>
+      <ellipse cx="6.5" cy="6.5" rx="4" ry="1.6" />
+      <path d="M2.5 6.5v6c0 .9 1.8 1.6 4 1.6s4-.7 4-1.6v-6" />
+      <ellipse cx="17.5" cy="11" rx="4" ry="1.6" />
+      <path d="M13.5 11v6c0 .9 1.8 1.6 4 1.6s4-.7 4-1.6v-6" />
+      <path d="M7 18h4.5M9.5 16l2 2-2 2" />
+    </>
+  ),
+  datatransfer: (
+    <>
+      <rect x="3" y="7" width="11" height="9" rx="1.2" />
+      <path d="M14 10h4l3 3v3h-7" />
+      <circle cx="7" cy="17.5" r="1.6" />
+      <circle cx="17.5" cy="17.5" r="1.6" />
+      <path d="M6 11.5h5M8.5 9.5l2.5 2-2.5 2" />
+    </>
+  ),
+  // AI: ready-made services (sparkles) and building your own model (a small neural network)
+  aiservices: (
+    <>
+      <path d="M10 3l1.7 4.6L16.3 9.3l-4.6 1.7L10 15.6 8.3 11 3.7 9.3l4.6-1.7z" />
+      <path d="M18 13.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z" />
+    </>
+  ),
+  sagemaker: (
+    <>
+      <circle cx="5" cy="6" r="1.8" />
+      <circle cx="5" cy="12" r="1.8" />
+      <circle cx="5" cy="18" r="1.8" />
+      <circle cx="19" cy="9" r="1.8" />
+      <circle cx="19" cy="15" r="1.8" />
+      <path d="M6.7 6.5l10.6 2M6.7 11.5l10.6-2M6.7 12.5l10.6 2M6.7 17.5l10.6-2" />
     </>
   ),
   // disaster recovery: the primary Region failing over to a second one
@@ -109,6 +207,17 @@ const GLYPH = {
       <rect x="13" y="12.5" width="8.5" height="7" rx="1" />
       <rect x="7.75" y="4.5" width="8.5" height="7" rx="1" />
       <path d="M5.3 15v2M8.2 15v2M15.8 15v2M18.7 15v2M10.5 7v2M13.5 7v2" />
+    </>
+  ),
+  // purpose-built databases: a table, a document and a graph side by side
+  purposedb: (
+    <>
+      <ellipse cx="8" cy="5.5" rx="5" ry="2" />
+      <path d="M3 5.5v7c0 1.1 2.2 2 5 2s5-.9 5-2v-7" />
+      <circle cx="17.5" cy="13" r="2" />
+      <circle cx="20.5" cy="20" r="1.5" />
+      <circle cx="13.5" cy="20" r="1.5" />
+      <path d="M16.4 14.7l-2 3.9M18.4 14.8l1.5 3.7" />
     </>
   ),
   elasticache: (
@@ -451,6 +560,9 @@ const GLYPH = {
   ),
 };
 
+// the 5G mast shares the Wavelength antenna
+GLYPH.tower = GLYPH.wavelength;
+
 export function Glyph({ name, size = 18, stroke = 1.8 }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -460,7 +572,7 @@ export function Glyph({ name, size = 18, stroke = 1.8 }) {
 }
 
 // model kinds without a lesson of their own take the colour of the lesson that explains them
-const KIND_TO_SERVICE = { firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
+const KIND_TO_SERVICE = { rekognition: 'aiservices', textract: 'aiservices', transcribe: 'aiservices', comprehend: 'aiservices', translate: 'aiservices', polly: 'aiservices', lex: 'aiservices', notebook: 'sagemaker', mlmodel: 'sagemaker', endpoint: 'sagemaker', bedrock: 'sagemaker', amazonq: 'sagemaker', agent: 'migrate', dsagent: 'datatransfer', staging: 'migrate', mgn: 'migrate', sct: 'dms', datasync: 'datatransfer', transfer: 'datatransfer', snowball: 'datatransfer', tape: 'storagegateway', docdb: 'purposedb', neptune: 'purposedb', keyspaces: 'purposedb', memorydb: 'purposedb', timestream: 'purposedb', onprem: 'cloud', server: 'cloud', localzone: 'foundation', wavelength: 'foundation', tower: 'foundation', outposts: 'foundation', pricing: 'budgets', cur: 'budgets', firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
 const SPECIAL = { users: ['#0ea5e9', 'users'], user: ['#0ea5e9', 'users'], external: ['#0891b2', 'foundation'] };
 
 export function ServiceIcon({ id, size = 34, glyph }) {

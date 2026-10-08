@@ -4,7 +4,7 @@ import { CATEGORIES, SERVICES } from '../data/services.js';
 import { useApp, useUi } from '../state/store.js';
 import { Icon, ServiceIcon } from './icons.jsx';
 
-const ORDER = ['foundation', 'compute', 'storage', 'database', 'network', 'integration', 'analytics', 'management', 'devtools', 'security'];
+const ORDER = ['foundation', 'compute', 'storage', 'database', 'network', 'integration', 'analytics', 'ai', 'migration', 'management', 'devtools', 'security'];
 
 export function ServiceList({ onPick }) {
   const { engine } = useApp();

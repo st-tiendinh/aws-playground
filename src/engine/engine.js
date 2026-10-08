@@ -14,6 +14,7 @@ import { Simulation } from '../sim/simulation.js';
 import { writePref } from '../state/store.js';
 import { CameraRig } from './cameraRig.js';
 import { ExploreScene } from './exploreScene.js';
+import { PLATFORM_KINDS } from './models/index.js';
 import { HOME_VIEW, SandboxScene } from './sandboxScene.js';
 import { World } from './world.js';
 
@@ -343,9 +344,9 @@ export function createEngine({ host, ui, simStore }) {
     hoverClock = 0.08;
     const m = pointer && !down ? pickAt(pointer.x, pointer.y) : null;
     if (m !== hovered) {
-      if (hovered && hovered.kind !== 'az' && hovered.kind !== 'zone') hovered.highlighted = false;
+      if (hovered && !PLATFORM_KINDS.has(hovered.kind)) hovered.highlighted = false;
       hovered = m;
-      if (m && m.kind !== 'az' && m.kind !== 'zone' && m.kind !== 'users') m.highlighted = true;
+      if (m && !PLATFORM_KINDS.has(m.kind) && m.kind !== 'users') m.highlighted = true;
       canvas.style.cursor = m ? 'pointer' : '';
     }
   }
@@ -357,7 +358,8 @@ export function createEngine({ host, ui, simStore }) {
   let t = 0;
   let pushClock = 0;
   let histClock = 0;
-  const debug = { sim, sandbox, explore, world, rig, camera, renderer, scene };
+  // `render` draws one frame on demand: tests can check visuals while rAF is paused (hidden tab)
+  const debug = { sim, sandbox, explore, world, rig, camera, renderer, scene, render };
   window.__aws = debug;
 
   function render() {

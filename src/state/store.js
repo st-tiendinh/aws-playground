@@ -45,7 +45,7 @@ export function createUiStore() {
   return createStore({
     mode: 'explore', // 'explore' | 'sandbox'
     intro: readPref('intro', true),
-    serviceId: 'foundation',
+    serviceId: 'cloud',
     step: 0,
     stepCount: 0,
     playing: true,
