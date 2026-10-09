@@ -44,6 +44,21 @@ const GLYPH = {
       <path d="M14 3v5h5M9 12h7M9 15h7M9 18h4" />
     </>
   ),
+  // your first account: a person with a padlock
+  firstaccount: (
+    <>
+      <circle cx="9.5" cy="8" r="3.2" />
+      <path d="M3.5 20c.6-3.6 3-5.6 6-5.6 1.3 0 2.5.4 3.4 1" />
+      <rect x="14" y="14.5" width="7" height="5.5" rx="1" />
+      <path d="M15.5 14.5v-1.6a2 2 0 0 1 4 0v1.6" />
+    </>
+  ),
+  mfa: (
+    <>
+      <rect x="7" y="2.5" width="10" height="19" rx="2" />
+      <path d="M9.5 10h5M9.5 13h5M11 18.5h2" />
+    </>
+  ),
   foundation: (
     <>
       <circle cx="12" cy="12" r="8" />
@@ -528,6 +543,14 @@ const GLYPH = {
       <path d="M12 6.4v2.9M12 13.9v2.9M7.5 9l2.5 1.4M14 12.8l2.5 1.4M7.5 14.2l2.5-1.4M14 10.4l2.5-1.4" />
     </>
   ),
+  // a small sailing boat
+  lightsail: (
+    <>
+      <path d="M12 3v13M12 4.5l6 10.5h-6M11 7.5L6 15h5" />
+      <path d="M4 17.5h16l-2.2 3H6.2z" />
+    </>
+  ),
+  amplify: <path d="M3.5 20.5L10 4h4l6.5 16.5M7 13.5h10M12 13.5l-3 7" />,
   beanstalk: (
     <>
       <path d="M12 21V10" />
@@ -572,7 +595,7 @@ export function Glyph({ name, size = 18, stroke = 1.8 }) {
 }
 
 // model kinds without a lesson of their own take the colour of the lesson that explains them
-const KIND_TO_SERVICE = { rekognition: 'aiservices', textract: 'aiservices', transcribe: 'aiservices', comprehend: 'aiservices', translate: 'aiservices', polly: 'aiservices', lex: 'aiservices', notebook: 'sagemaker', mlmodel: 'sagemaker', endpoint: 'sagemaker', bedrock: 'sagemaker', amazonq: 'sagemaker', agent: 'migrate', dsagent: 'datatransfer', staging: 'migrate', mgn: 'migrate', sct: 'dms', datasync: 'datatransfer', transfer: 'datatransfer', snowball: 'datatransfer', tape: 'storagegateway', docdb: 'purposedb', neptune: 'purposedb', keyspaces: 'purposedb', memorydb: 'purposedb', timestream: 'purposedb', onprem: 'cloud', server: 'cloud', localzone: 'foundation', wavelength: 'foundation', tower: 'foundation', outposts: 'foundation', pricing: 'budgets', cur: 'budgets', firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
+const KIND_TO_SERVICE = { root: 'firstaccount', mfa: 'firstaccount', amplify: 'lightsail', rekognition: 'aiservices', textract: 'aiservices', transcribe: 'aiservices', comprehend: 'aiservices', translate: 'aiservices', polly: 'aiservices', lex: 'aiservices', notebook: 'sagemaker', mlmodel: 'sagemaker', endpoint: 'sagemaker', bedrock: 'sagemaker', amazonq: 'sagemaker', agent: 'migrate', dsagent: 'datatransfer', staging: 'migrate', mgn: 'migrate', sct: 'dms', datasync: 'datatransfer', transfer: 'datatransfer', snowball: 'datatransfer', tape: 'storagegateway', docdb: 'purposedb', neptune: 'purposedb', keyspaces: 'purposedb', memorydb: 'purposedb', timestream: 'purposedb', onprem: 'cloud', server: 'cloud', localzone: 'foundation', wavelength: 'foundation', tower: 'foundation', outposts: 'foundation', pricing: 'budgets', cur: 'budgets', firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
 const SPECIAL = { users: ['#0ea5e9', 'users'], user: ['#0ea5e9', 'users'], external: ['#0891b2', 'foundation'] };
 
 export function ServiceIcon({ id, size = 34, glyph }) {

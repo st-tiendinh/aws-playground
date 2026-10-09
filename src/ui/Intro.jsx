@@ -26,7 +26,7 @@ export function Intro() {
               <Icon name="book" size={26} />
             </span>
             <b>Học từng dịch vụ</b>
-            <span>Xem luồng hoạt động của EC2, S3, Load Balancer, RDS, Lambda… qua từng bước có hoạt hình và giải thích.</span>
+            <span>Mới bắt đầu? Đi theo Lộ trình người mới 12 bài, từ “Cloud là gì” tới đưa website đầu tiên lên mạng. Mỗi bài là các bước có hoạt hình và giải thích.</span>
             <em>
               Bắt đầu học <Icon name="arrowRight" size={15} />
             </em>

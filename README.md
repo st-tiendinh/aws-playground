@@ -8,12 +8,14 @@ Dự án học tập độc lập, không liên kết với Amazon Web Services.
 
 ### 1. Học từng dịch vụ
 
-Chọn một dịch vụ ở cột trái để xem luồng hoạt động của nó qua 6–14 bước có hoạt hình 3D, kèm lời giải thích. Bài đầu tiên, **Cloud là gì**, dành cho người chưa biết gì về cloud:
+Chọn một dịch vụ ở cột trái để xem luồng hoạt động của nó qua 6–14 bước có hoạt hình 3D, kèm lời giải thích.
+
+Cột trái mở sẵn tab **Lộ trình người mới**: 12 bài theo thứ tự — Cloud là gì → Tài khoản đầu tiên → Region & AZ → IAM → EC2 → S3 → VPC → RDS → Lambda → CloudWatch → Budgets → Lightsail & Amplify. Các bài này mang nhãn **Cơ bản**; xem tới bước cuối là bài được đánh dấu xong (lưu trong trình duyệt), và bước cuối có nút sang bài tiếp theo. Tab **Tất cả** liệt kê mọi bài theo nhóm:
 
 | Nhóm | Dịch vụ |
 | --- | --- |
-| Nền tảng | Cloud là gì (6 lợi ích của cloud, IaaS / PaaS / SaaS, cloud / hybrid / on-premises, Console / CLI / SDK / IaC, AWS CAF), Region & Availability Zone (kèm Local Zone Hà Nội, Wavelength, Outposts, edge location), Mô hình trách nhiệm chung (Shared Responsibility) |
-| Tính toán | EC2, Auto Scaling, Lambda, ECS + Fargate, EKS, Elastic Beanstalk |
+| Nền tảng | Cloud là gì (6 lợi ích của cloud, IaaS / PaaS / SaaS, cloud / hybrid / on-premises, Console / CLI / SDK / IaC, AWS CAF), Tài khoản AWS đầu tiên (gói Free / Paid, root user & MFA, user admin, chọn Region, budget, CloudTrail Event history, dọn tài nguyên), Region & Availability Zone (kèm Local Zone Hà Nội, Wavelength, Outposts, edge location), Mô hình trách nhiệm chung (Shared Responsibility) |
+| Tính toán | EC2, Auto Scaling, Lambda, ECS + Fargate, EKS, Elastic Beanstalk, Lightsail & Amplify (gói giá cố định, xuất sang EC2, Amplify Hosting từ Git, preview theo pull request, Amplify Gen 2) |
 | Lưu trữ | S3, EBS, EFS, Amazon FSx (Windows File Server, Lustre, NetApp ONTAP, OpenZFS), AWS Storage Gateway (S3 File, Volume, Tape Gateway), AWS Backup, Chiến lược DR & Elastic Disaster Recovery (kèm Global Accelerator) |
 | Cơ sở dữ liệu | RDS, Aurora, DynamoDB, ElastiCache, Database chuyên dụng (DocumentDB, Neptune, Keyspaces, kèm MemoryDB, Timestream) |
 | Mạng | Elastic Load Balancing, CloudFront, Route 53, VPC (gồm Internet Gateway, route table, Security Group & Network ACL, NAT Gateway, VPC Endpoint & PrivateLink, Flow Logs, VPC Peering), Transit Gateway, Site-to-Site VPN & Direct Connect |
@@ -126,4 +128,5 @@ test/
 1. Thêm nội dung vào `src/data/services.js` (`models` là các loại mô hình 3D đại diện cho dịch vụ, `keywords` là từ khoá thêm cho ô tìm kiếm) và icon vào `GLYPH` trong `src/ui/icons.jsx` — thiếu icon thì danh sách hiện icon quả địa cầu. `sandbox` là một gợi ý thử trong Sandbox, hoặc một danh sách gợi ý có `label`.
 2. Thêm kịch bản vào `src/data/flows.js`: khai báo `nodes` (loại mô hình, vị trí) và `steps`. Mỗi bước có `title`, `text`, `cam`, các trường `show / hide / state / load / count`, danh sách hành động `run` (theo thời điểm `at`) và `loop`. Hành động: `packet`, `stream`, `callout`, `pulse`, `beam`, `break`, `fix`, `quake`, `show`, `hide`, `state`, `ghost`, `label`, `load`, `count`, `flash`, `focus`, `shake`, `sound`. Cần loại mô hình mới thì thêm vào `src/engine/models/index.js` và danh sách `KINDS` trong `test/flows.test.mjs`.
 3. Thành phần con không có bài riêng (ví dụ NAT Gateway, Security Group nằm trong bài VPC): đặt `key` cho bước giải thích nó, thêm mô tả ngắn vào `OBJECT_INFO` và trỏ loại mô hình tới bước đó trong `LESSON_FOR` (`nat: ['vpc', 'nat']`). Bấm vào mô hình 3D hoặc nút ⓘ trong Sandbox sẽ mở bài lớn ngay tại bước đó.
-4. Chạy `pnpm test` để kiểm tra kịch bản.
+4. Bài dành cho người mới thì thêm vào `BEGINNER_PATH` trong `src/data/services.js` (kèm `why`: bài này thêm được gì) — bài trong lộ trình tự có nhãn **Cơ bản**.
+5. Chạy `pnpm test` để kiểm tra kịch bản.

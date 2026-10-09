@@ -50,6 +50,37 @@ export const SERVICES = [
     ],
   },
   {
+    id: 'firstaccount',
+    name: 'Tài khoản AWS đầu tiên: tạo và bảo vệ',
+    short: 'Tài khoản đầu tiên',
+    category: 'foundation',
+    tagline: 'Đăng ký · MFA cho root · user admin · cảnh báo chi phí',
+    models: ['root', 'mfa'],
+    keywords: ['AWS account', 'tài khoản AWS', 'đăng ký', 'sign up', 'root user', 'MFA', 'passkey', 'FIDO2', 'security key', 'authenticator', 'Free plan', 'Paid plan', 'Free Tier', 'tín dụng', 'credits', 'zero spend budget', 'Billing and Cost Management', 'account ID', 'access portal', 'AdministratorAccess', 'IAM user', 'Region selector', 'Event history', 'CloudShell', 'dọn dẹp tài nguyên'],
+    what: 'Tài khoản AWS là nơi chứa mọi tài nguyên bạn tạo và là đơn vị tính hoá đơn. Người tạo tài khoản đăng nhập bằng email và mật khẩu — đó là root user, có toàn quyền. Việc đầu tiên sau khi đăng ký: bật MFA cho root, tạo user admin riêng cho việc hằng ngày, đặt cảnh báo chi phí, rồi mới bắt đầu tạo tài nguyên ở Region đã chọn.',
+    analogy: 'Như nhận chìa khoá căn nhà mới: chìa gốc (root) cất két, kèm khoá vân tay (MFA); hằng ngày dùng chìa phụ (user admin); lắp đồng hồ điện báo khi dùng quá mức (budget); camera ở cửa ghi lại ai ra vào (CloudTrail).',
+    when: [
+      'Ngay sau khi đăng ký, trước khi tạo bất kỳ EC2, database hay bucket nào.',
+      'Khi nhận bàn giao một tài khoản cũ: kiểm tra root đã có MFA, root có access key không, đã có budget chưa.',
+      'Khi có thêm người cùng làm: mỗi người một user riêng, không chia sẻ mật khẩu root.',
+    ],
+    concepts: [
+      ['Root user', 'Danh tính tạo tài khoản (email đăng ký), có mọi quyền, IAM policy không giới hạn được. Chỉ dùng cho việc bắt buộc: đóng tài khoản, đổi email/mật khẩu root, khôi phục quyền khi admin tự khoá mình, bật S3 MFA Delete. Không tạo access key cho root.'],
+      ['MFA', 'Lớp xác thực thứ hai: passkey, khoá bảo mật FIDO2, app xác thực (mã 6 số) hoặc thiết bị TOTP phần cứng — không còn SMS. Mọi root user bắt buộc có MFA (đăng ký trong 35 ngày); mỗi user tối đa 8 thiết bị.'],
+      ['User admin hằng ngày', 'AWS khuyên IAM Identity Center: access portal, khoá tạm thời. Bật nó ở tài khoản đứng riêng sẽ tạo AWS Organization, khiến gói Free lên Paid và mất tín dụng — ở gói Free thì dùng IAM user admin có MFA, chỉ đăng nhập console.'],
+      ['Gói Free · Paid', 'Cả hai nhận $100 tín dụng khi đăng ký và thêm $20 cho mỗi bài khám phá (tối đa $100: chạy EC2, tạo budget, RDS, Lambda, Bedrock). Gói Free không bị trừ tiền, hết sau 6 tháng hoặc khi cạn tín dụng thì tài khoản đóng, dữ liệu giữ 90 ngày.'],
+      ['Region', 'Chọn ở góc trên bên phải console; chưa đặt mặc định thì console mở Region dùng lần trước. EC2, RDS… thuộc một Region; IAM, Budgets là dịch vụ toàn cầu.'],
+      ['Budget · Event history', 'Zero spend budget báo ngay khi chi phí vượt mức miễn phí; AWS cũng tự gửi email khi dùng tới 85% mức Free Tier. CloudTrail Event history bật sẵn, miễn phí, giữ 90 ngày các thao tác quản trị.'],
+      ['Cách đăng ký mới', 'Từ 9/2026 AWS mở dần cách đăng ký mới: đăng nhập bằng Google, GitHub, Apple hay Amazon, đa số không cần thẻ, tài nguyên gom theo "project" gắn sẵn một Region, không có root user. Bài này mô tả cách đăng ký quen thuộc.'],
+    ],
+    pricing: 'Mở tài khoản, IAM, IAM Identity Center, MFA, CloudShell và CloudTrail Event history đều miễn phí. AWS Budgets: theo dõi và gửi cảnh báo miễn phí; chỉ budget có action mới tính phí từ cái thứ ba. Chi phí đến từ tài nguyên bạn tạo — kể cả thứ quên tắt ở Region khác, nên dọn ngay sau khi thử.',
+    tip: 'Đề CLF hay hỏi: việc nào chỉ root làm được (đóng tài khoản, đổi email root, khôi phục quyền IAM…); "bảo vệ root" → bật MFA, không tạo access key, dùng user khác cho việc hằng ngày; "nhiều người dùng chung một tài khoản" → mỗi người một danh tính riêng, quyền tối thiểu.',
+    sandbox: [
+      { label: 'Không có budget: lộ access key', preset: 'single', action: 'leakedKey' },
+      { label: 'Có budget $200: biết trong ngày', config: { compute: 'ec2', ec2: { a: 1, b: 0 }, budget: 200 }, action: 'leakedKey' },
+    ],
+  },
+  {
     id: 'foundation',
     name: 'Region & Availability Zone',
     short: 'Region & AZ',
@@ -646,6 +677,33 @@ export const SERVICES = [
         action: 'badDeploy',
       },
     ],
+  },
+  {
+    id: 'lightsail',
+    name: 'Lightsail & Amplify: đưa website lên nhanh',
+    short: 'Lightsail & Amplify',
+    category: 'compute',
+    tagline: 'Máy chủ trọn gói giá cố định · web từ Git lên CDN',
+    models: ['lightsail', 'amplify'],
+    keywords: ['Lightsail', 'Amazon Lightsail', 'VPS', 'WordPress', 'blueprint', 'bundle', 'static IP', 'Amplify', 'AWS Amplify', 'Amplify Hosting', 'Amplify Gen 2', 'static website', 'website tĩnh', 'React', 'Next.js', 'pull request preview', 'CI/CD', 'hosting'],
+    what: 'Hai cách nhanh nhất để đưa website đầu tiên lên AWS. Amazon Lightsail cho thuê máy chủ ảo trọn gói: chọn blueprint (WordPress, LAMP, Node.js…) và một gói giá cố định theo tháng đã gồm CPU, RAM, ổ SSD, lượng dữ liệu truyền và IP. AWS Amplify Hosting nhận code từ Git, tự build và phát qua CDN CloudFront kèm HTTPS — hợp với web React, Vue, Next.js.',
+    analogy: 'Lightsail như thuê phòng trọ trọn gói: một giá đã gồm điện nước, internet, xách vali vào ở. Amplify Hosting như gửi bản thảo cho nhà in có sẵn mạng phát hành: bạn chỉ sửa nội dung, họ lo in và đưa tới sạp báo khắp nơi.',
+    when: [
+      'Blog WordPress, web công ty nhỏ, máy dev/test — muốn giá biết trước, không cần học VPC: Lightsail.',
+      'Web React, Vue, Next.js… trong GitHub, muốn push là lên web, có bản xem trước cho từng pull request: Amplify Hosting.',
+      'Cần co giãn tự động, nhiều tuỳ biến mạng, dùng sâu dịch vụ AWS khác: chuyển sang EC2 (hoặc Elastic Beanstalk).',
+    ],
+    concepts: [
+      ['Blueprint · Bundle', 'Blueprint là phần mềm cài sẵn (WordPress, LAMP, Node.js, hay chỉ hệ điều hành). Bundle là gói cấu hình giá cố định theo tháng: RAM, vCPU, SSD, lượng dữ liệu truyền; có cả gói tối ưu bộ nhớ hay CPU.'],
+      ['Static IP · DNS · firewall', 'Static IP miễn phí khi đang gắn vào instance (để rời quá 1 giờ thì $0,005/giờ). DNS zone miễn phí để trỏ tên miền; tường lửa đơn giản ngay trong trang instance.'],
+      ['Snapshot · xuất sang EC2', 'Snapshot ($0,05/GB-tháng) chụp lại instance để sao lưu hay nhân bản. Cần nhiều tính năng hơn thì xuất snapshot sang EC2 — miễn phí; một cú bấm peering nối Lightsail với VPC mặc định.'],
+      ['Amplify Hosting', 'Nối repo Git: mỗi lần push tự build và deploy lên CloudFront, HTTPS miễn phí, tên miền riêng, bản xem trước cho từng pull request.'],
+      ['Amplify Gen 2', 'Khai báo backend bằng TypeScript trong repo (chạy trên CDK): Auth (Cognito), Data (AppSync + DynamoDB), Storage (S3), Functions (Lambda); mỗi lập trình viên có sandbox riêng. Amplify Gen 1 đang ở chế độ bảo trì, hết hỗ trợ 1/5/2027.'],
+      ['S3 static website', 'S3 phát được trang tĩnh, nhưng endpoint website của S3 chỉ có HTTP; muốn HTTPS và tên miền riêng thì đặt CloudFront phía trước — hoặc dùng Amplify Hosting.'],
+    ],
+    pricing: 'Lightsail: giá trọn gói theo tháng — $5 (0,5 GB RAM), $7 (1 GB RAM, 2 vCPU, 40 GB SSD, 2 TB truyền), $12, $24…; bản chỉ IPv6 từ $3,50. Vượt hạn mức chỉ tính dữ liệu ra, từ $0,09/GB. Database từ $15, load balancer $18 mỗi tháng. Amplify Hosting: build $0,01/phút, lưu trữ $0,023/GB-tháng, phát ra $0,15/GB.',
+    tip: 'Đề CLF: "máy chủ ảo đơn giản, giá cố định hằng tháng, không cần biết nhiều về AWS" → Lightsail. "Web front-end từ Git, CI/CD và hosting có sẵn" → Amplify. "Tải code lên, AWS lo môi trường chạy có co giãn" → Elastic Beanstalk. SAA-C03 không thi Lightsail nhưng có Amplify.',
+    sandbox: { preset: 'single', action: 'spike' },
   },
   {
     id: 'apigw',
@@ -1733,6 +1791,25 @@ export const SERVICES = [
 
 export const serviceById = (id) => SERVICES.find((s) => s.id === id) || null;
 
+// The beginner path: the lessons a newcomer should take first, in this order — each one is
+// tagged "Cơ bản". `why`: what this lesson adds to the ones before it.
+export const BEGINNER_PATH = [
+  { id: 'cloud', why: 'Lợi ích, mô hình dịch vụ, trả tiền ra sao' },
+  { id: 'firstaccount', why: 'Tạo tài khoản và khoá nó lại trước tiên' },
+  { id: 'foundation', why: 'Hệ thống chạy ở đâu: Region, AZ' },
+  { id: 'iam', why: 'Ai được làm gì: user, role, policy' },
+  { id: 'ec2', why: 'Máy chủ ảo đầu tiên của bạn' },
+  { id: 's3', why: 'Lưu file, ảnh, bản sao lưu' },
+  { id: 'vpc', why: 'Mạng riêng: subnet, Security Group' },
+  { id: 'rds', why: 'Database quan hệ do AWS vận hành' },
+  { id: 'lambda', why: 'Chạy code mà không quản lý server' },
+  { id: 'cloudwatch', why: 'Theo dõi và báo động khi có sự cố' },
+  { id: 'budgets', why: 'Không bị bất ngờ vì hoá đơn' },
+  { id: 'lightsail', why: 'Đưa website đầu tiên lên mạng' },
+];
+const BASIC = new Set(BEGINNER_PATH.map((p) => p.id));
+export const isBasic = (id) => BASIC.has(id);
+
 // clicked 3D model kind → catalogue entry
 export function serviceForModel(kind) {
   return SERVICES.find((s) => s.models.includes(kind)) || null;
@@ -1782,11 +1859,17 @@ export const OBJECT_INFO = {
   transfer: { title: 'AWS Transfer Family', text: 'Máy chủ SFTP, FTPS, FTP, AS2 do AWS vận hành; file tải lên nằm thẳng trong S3 hoặc EFS. Đối tác giữ nguyên cách gửi file quen thuộc.' },
   snowball: { title: 'AWS Snowball Edge', text: 'Thiết bị lưu trữ AWS gửi tới tận nơi để chép dữ liệu rồi gửi trả, AWS nạp vào S3 — dùng khi mạng quá chậm so với lượng dữ liệu. Ngừng nhận khách mới từ 07/11/2025, hết hỗ trợ từ 31/12/2026.' },
   tape: { title: 'Băng từ', text: 'Băng từ (tape) lưu bản sao lưu dài hạn. Tape Gateway thay băng thật bằng băng ảo nằm trong S3; băng lưu kho chuyển sang S3 Glacier Flexible Retrieval hoặc Deep Archive.' },
+  amplify: { title: 'AWS Amplify Hosting', text: 'Nối repo Git, mỗi lần push tự build và đưa bản mới ra CloudFront kèm HTTPS miễn phí; có bản xem trước cho từng pull request. Amplify Gen 2 thêm backend khai báo bằng TypeScript.' },
+  root: { title: 'Root user', text: 'Danh tính tạo ra tài khoản (email đăng ký), có mọi quyền và IAM không giới hạn được. Bật MFA, không tạo access key, chỉ dùng cho vài việc bắt buộc như đóng tài khoản hay đổi email root.' },
+  mfa: { title: 'Thiết bị MFA', text: 'Lớp xác thực thứ hai khi đăng nhập: passkey, khoá bảo mật FIDO2, app xác thực hoặc thiết bị TOTP (không còn SMS). Có mật khẩu mà thiếu MFA vẫn không vào được.' },
   cur: { title: 'AWS Cost and Usage Report', text: 'Bản xuất chi phí chi tiết nhất (CUR 2.0, trong Data Exports): từng dòng theo dịch vụ, tài nguyên, tag, theo giờ/ngày/tháng, giao vào S3 mỗi ngày để truy vấn bằng Athena hay vẽ bằng Quick Sight.' },
 };
 
 // parts with no lesson of their own: model kind → [lesson id, step key] that teaches it
 export const LESSON_FOR = {
+  amplify: ['lightsail', 'amplify'],
+  root: ['firstaccount', 'root'],
+  mfa: ['firstaccount', 'mfa'],
   nat: ['vpc', 'nat'],
   sg: ['vpc', 'sg'],
   nacl: ['vpc', 'nacl'],

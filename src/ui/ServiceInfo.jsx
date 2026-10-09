@@ -1,9 +1,10 @@
 // Explore mode, right panel: what the selected service is, an everyday analogy, when to use
 // it, key terms, pricing — and a shortcut into the sandbox.
-import { CATEGORIES, serviceById } from '../data/services.js';
+import { BEGINNER_PATH, CATEGORIES, serviceById } from '../data/services.js';
 import { presetById } from '../sim/presets.js';
 import { useApp, useUi } from '../state/store.js';
 import { Icon, ServiceIcon } from './icons.jsx';
+import { BasicTag } from './ServiceList.jsx';
 
 const ACTION_LABEL = { quake: 'Động đất', serverFail: 'Server hỏng', spike: '1 triệu người truy cập', dbFail: 'Database sự cố', ddos: 'Tấn công DDoS', sqlInjection: 'SQL injection', paymentDown: 'Thanh toán sập', dataDelete: 'Xoá nhầm dữ liệu', leakedKey: 'Lộ access key', badDeploy: 'Deploy lỗi', regionDown: 'Cả Region sập', report: 'Báo cáo cuối tháng' };
 
@@ -20,6 +21,7 @@ export function ServiceInfo() {
   const s = serviceById(id);
   if (!s) return null;
   const cat = CATEGORIES[s.category];
+  const onPath = BEGINNER_PATH.findIndex((p) => p.id === s.id);
   // one sandbox suggestion, or a list of labelled ones (a lesson that covers several parts)
   const tries = !s.sandbox ? [] : Array.isArray(s.sandbox) ? s.sandbox : [s.sandbox];
 
@@ -28,9 +30,19 @@ export function ServiceInfo() {
       <header className="svc-info-head">
         <ServiceIcon id={s.id} size={46} />
         <div>
-          <span className="chip" style={{ '--c': cat.color }}>
-            {cat.name}
-          </span>
+          <div className="chips">
+            <span className="chip" style={{ '--c': cat.color }}>
+              {cat.name}
+            </span>
+            {onPath >= 0 && (
+              <>
+                <BasicTag />
+                <span className="path-pos">
+                  Lộ trình: bài {onPath + 1}/{BEGINNER_PATH.length}
+                </span>
+              </>
+            )}
+          </div>
           <h2>{s.name}</h2>
           <p className="tagline">{s.tagline}</p>
         </div>

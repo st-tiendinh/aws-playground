@@ -96,7 +96,16 @@ export function createEngine({ host, ui, simStore }) {
     world,
     rig,
     sfx,
-    onStep: (s) => ui.set({ step: s.index, stepCount: s.count, playing: s.playing, flowDone: !!s.done }),
+    onStep: (s) => {
+      ui.set({ step: s.index, stepCount: s.count, playing: s.playing, flowDone: !!s.done });
+      // reaching the last step counts the lesson as learnt (ticks it on the beginner path)
+      const { serviceId, done } = ui.get();
+      if (s.count && s.index === s.count - 1 && !done.includes(serviceId)) {
+        const next = [...done, serviceId];
+        writePref('done', next);
+        ui.set({ done: next });
+      }
+    },
   });
   scene.add(explore.root);
 

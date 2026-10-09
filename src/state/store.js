@@ -46,6 +46,8 @@ export function createUiStore() {
     mode: 'explore', // 'explore' | 'sandbox'
     intro: readPref('intro', true),
     serviceId: 'cloud',
+    listTab: readPref('listTab', 'path'), // left panel: 'path' (beginner path) | 'all'
+    done: readPref('done', []), // ids of lessons watched to the last step
     step: 0,
     stepCount: 0,
     playing: true,
