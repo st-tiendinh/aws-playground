@@ -50,6 +50,8 @@ export function createUiStore() {
     done: readPref('done', []), // ids of lessons watched to the last step
     step: 0,
     stepCount: 0,
+    stepLast: false, // no further step to go to (advanced ones skipped)
+    skipAdvanced: readPref('skipAdvanced', true), // next / auto-advance pass over "Nâng cao" steps
     playing: true,
     flowDone: false,
     picked: null,

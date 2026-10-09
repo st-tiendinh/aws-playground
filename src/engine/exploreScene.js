@@ -2,6 +2,9 @@
 // sets which models are visible and in what state, moves the camera and runs timed
 // actions (packets, failures, callouts…), optionally on a loop. Steps are deterministic:
 // jumping to step N rebuilds the state from the persistent actions of steps 0…N-1.
+// Steps marked `advanced` can be skipped: next / prev / auto-advance pass over them while
+// `skipAdvanced` is on (the state stays the same, since it is rebuilt from every earlier step),
+// but a click on their dot still opens them.
 import * as THREE from 'three';
 import { Fx } from './fx.js';
 import { createModel, PLATFORM_KINDS } from './models/index.js';
@@ -36,6 +39,7 @@ export class ExploreScene {
     this.active = false;
     this.labelsOn = true;
     this.autoAdvance = true;
+    this.skipAdvanced = true;
     this.done = false;
   }
 
@@ -259,11 +263,13 @@ export class ExploreScene {
   }
 
   // ── navigation ─────────────────────────────────────────────────────────────
-  goto(i, { cameraInstant = false } = {}) {
+  // `forward`: moving on to the next step the learner sees (animated), even when it skipped some
+  goto(i, { cameraInstant = false, forward } = {}) {
     if (!this.flow) return;
     const steps = this.flow.steps;
     i = Math.max(0, Math.min(steps.length - 1, i));
-    const forward = i === this.index + 1 && !cameraInstant;
+    const adjacent = i === this.index + 1 && !cameraInstant;
+    forward = (forward ?? adjacent) && !cameraInstant;
     this.index = i;
     this.time = 0;
     this.done = false;
@@ -277,7 +283,7 @@ export class ExploreScene {
     for (const a of step.run || []) this.pending.push({ at: a.at || 0, a });
     this.pending.sort((x, y) => x.at - y.at);
     // a step without its own camera keeps the framing of the last step that had one
-    const cam = step.cam || (forward ? null : this._lastCam(i));
+    const cam = step.cam || (adjacent ? null : this._lastCam(i));
     if (cam) this._camera(cam, cameraInstant ? 0 : 1.4);
     this._report();
   }
@@ -287,12 +293,34 @@ export class ExploreScene {
     return this.flow.cam;
   }
 
+  _skips(i) {
+    return this.skipAdvanced && !!this.flow.steps[i].advanced;
+  }
+
+  // the next / previous step the learner sees, or -1
+  _neighbour(dir) {
+    if (!this.flow) return -1;
+    for (let j = this.index + dir; j >= 0 && j < this.flow.steps.length; j += dir) if (!this._skips(j)) return j;
+    return -1;
+  }
+
+  get isLast() {
+    return this._neighbour(1) < 0;
+  }
+
   next() {
-    if (this.flow && this.index < this.flow.steps.length - 1) this.goto(this.index + 1);
+    const j = this._neighbour(1);
+    if (j >= 0) this.goto(j, { forward: true });
   }
 
   prev() {
-    if (this.index > 0) this.goto(this.index - 1);
+    const j = this._neighbour(-1);
+    if (j >= 0) this.goto(j);
+  }
+
+  setSkipAdvanced(v) {
+    this.skipAdvanced = v;
+    this._report();
   }
 
   replay() {
@@ -305,7 +333,7 @@ export class ExploreScene {
   }
 
   _report() {
-    this.onStep?.({ index: this.index, count: this.flow ? this.flow.steps.length : 0, playing: this.playing, done: this.done });
+    this.onStep?.({ index: this.index, count: this.flow ? this.flow.steps.length : 0, last: this.flow ? this.isLast : false, playing: this.playing, done: this.done });
   }
 
   _camera(cam, duration) {
@@ -479,7 +507,7 @@ export class ExploreScene {
       }
       const dur = step.dur || 7;
       if (this.time >= dur && this.autoAdvance) {
-        if (this.index < this.flow.steps.length - 1) this.goto(this.index + 1);
+        if (!this.isLast) this.next();
         else if (!this.done) {
           this.done = true;
           this._report();

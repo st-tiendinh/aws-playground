@@ -214,6 +214,29 @@ const FACTORY = {
     return m;
   },
   amplify: (o) => new TokenModel({ kind: 'amplify', category: 'compute', color: '#c2410c', shape: 'cube', text: 'Amplify', fontSize: 50, glow: true, size: 1.4, ...o }),
+  // e-mail to customers: Amazon SES
+  ses: (o) => new TokenModel({ kind: 'ses', category: 'integration', color: CAT_COLOR.integration, shape: 'cube', text: 'SES', fontSize: 96, glow: true, size: 1.4, ...o }),
+  // generative AI on Bedrock: a knowledge base over your documents, guardrails, agents
+  kb: (o) => new TokenModel({ kind: 'kb', category: 'ai', color: '#3730a3', shape: 'card', text: 'KB', fontSize: 96, glow: true, size: 1.3, ...o }),
+  guardrail: (o) => new TokenModel({ kind: 'guardrail', category: 'ai', color: '#be123c', shape: 'card', text: 'Guardrail', fontSize: 44, glow: true, size: 1.3, ...o }),
+  agentcore: (o) => new TokenModel({ kind: 'agentcore', category: 'ai', color: '#312e81', shape: 'cube', text: 'AgentCore', fontSize: 40, glow: true, size: 1.4, ...o }),
+  // finding weak spots: software flaws (Inspector), sensitive data in S3 (Macie), one place for
+  // every finding and the security score (Security Hub)
+  inspector: (o) => new TokenModel({ kind: 'inspector', category: 'security', color: '#b91c1c', shape: 'cube', text: 'Inspector', fontSize: 44, glow: true, size: 1.4, ...o }),
+  macie: (o) => new TokenModel({ kind: 'macie', category: 'security', color: '#9f1239', shape: 'cube', text: 'Macie', fontSize: 66, glow: true, size: 1.4, ...o }),
+  securityhub: (o) => new TokenModel({ kind: 'securityhub', category: 'security', color: CAT_COLOR.security, shape: 'cube', text: 'Sec Hub', fontSize: 52, glow: true, size: 1.5, ...o }),
+  // parts taught inside bigger lessons: temporary credentials (STS), AWS's own incidents (Health),
+  // account limits (Service Quotas), right-sizing (Compute Optimizer), a governed multi-account
+  // setup (Control Tower), infrastructure in a programming language (CDK), a connection pool in
+  // front of RDS (RDS Proxy), staff laptops into the VPC (Client VPN)
+  sts: (o) => new TokenModel({ kind: 'sts', category: 'security', color: '#991b1b', shape: 'cube', text: 'STS', fontSize: 96, glow: true, size: 1.2, ...o }),
+  health: (o) => new TokenModel({ kind: 'health', category: 'management', color: '#1d4ed8', shape: 'cube', text: 'Health', fontSize: 62, glow: true, size: 1.3, ...o }),
+  quotas: (o) => new TokenModel({ kind: 'quotas', category: 'management', color: '#1e40af', shape: 'cube', text: 'Quotas', fontSize: 58, glow: true, size: 1.3, ...o }),
+  optimizer: (o) => new TokenModel({ kind: 'optimizer', category: 'management', color: '#2563eb', shape: 'cube', text: 'Optimizer', fontSize: 42, glow: true, size: 1.3, ...o }),
+  controltower: (o) => new TokenModel({ kind: 'controltower', category: 'management', color: '#1e3a8a', shape: 'cube', text: 'Tower', fontSize: 66, glow: true, size: 1.4, ...o }),
+  cdk: (o) => new TokenModel({ kind: 'cdk', category: 'devtools', color: CAT_COLOR.devtools, shape: 'card', text: 'CDK', fontSize: 96, glow: true, size: 1.4, ...o }),
+  rdsproxy: (o) => new TokenModel({ kind: 'rdsproxy', category: 'database', color: '#a21caf', shape: 'cube', text: 'Proxy', fontSize: 70, glow: true, size: 1.2, ...o }),
+  clientvpn: (o) => new TokenModel({ kind: 'clientvpn', category: 'network', color: '#6d28d9', shape: 'cube', text: 'Client VPN', fontSize: 36, glow: true, size: 1.3, ...o }),
 };
 
 // flat platforms (AZ, Region, data centres…): zone-style labels, no hover glow, smoke when destroyed
