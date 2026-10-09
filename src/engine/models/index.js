@@ -237,6 +237,35 @@ const FACTORY = {
   cdk: (o) => new TokenModel({ kind: 'cdk', category: 'devtools', color: CAT_COLOR.devtools, shape: 'card', text: 'CDK', fontSize: 96, glow: true, size: 1.4, ...o }),
   rdsproxy: (o) => new TokenModel({ kind: 'rdsproxy', category: 'database', color: '#a21caf', shape: 'cube', text: 'Proxy', fontSize: 70, glow: true, size: 1.2, ...o }),
   clientvpn: (o) => new TokenModel({ kind: 'clientvpn', category: 'network', color: '#6d28d9', shape: 'cube', text: 'Client VPN', fontSize: 36, glow: true, size: 1.3, ...o }),
+  // filtering whole VPCs: the Network Firewall endpoint in its own subnet, Firewall Manager rolling
+  // rules out to every account, the DNS Firewall on Route 53 Resolver
+  netfw: (o) => new TokenModel({ kind: 'netfw', category: 'security', color: '#b91c1c', shape: 'cube', text: 'Firewall', fontSize: 46, glow: true, size: 1.4, ...o }),
+  fms: (o) => new TokenModel({ kind: 'fms', category: 'security', color: '#9f1239', shape: 'cube', text: 'FW Mgr', fontSize: 56, glow: true, size: 1.4, ...o }),
+  dnsfw: (o) => new TokenModel({ kind: 'dnsfw', category: 'network', color: '#be123c', shape: 'card', text: 'DNS FW', fontSize: 52, glow: true, size: 1.2, ...o }),
+  // parts taught inside bigger lessons (package B): a message broker (Amazon MQ), GraphQL (AppSync),
+  // investigating a finding (Detective), a dedicated HSM, Active Directory, sharing resources
+  // across accounts (RAM), approved products (Service Catalog), Grafana and Prometheus, feature
+  // flags (AppConfig), serverless templates (SAM), a package repository (CodeArtifact), path
+  // checks (Reachability Analyzer), hybrid DNS (Resolver), golden AMIs (Image Builder), batch jobs,
+  // Spark clusters (EMR), Kafka (MSK)
+  mq: (o) => new TokenModel({ kind: 'mq', category: 'integration', color: '#be185d', shape: 'cube', text: 'MQ', fontSize: 100, glow: true, size: 1.3, ...o }),
+  appsync: (o) => new TokenModel({ kind: 'appsync', category: 'integration', color: '#db2777', shape: 'cube', text: 'AppSync', fontSize: 44, glow: true, size: 1.4, ...o }),
+  detective: (o) => new TokenModel({ kind: 'detective', category: 'security', color: '#7f1d1d', shape: 'cube', text: 'Detective', fontSize: 40, glow: true, size: 1.4, ...o }),
+  cloudhsm: (o) => new TokenModel({ kind: 'cloudhsm', category: 'security', color: '#881337', shape: 'cube', text: 'HSM', fontSize: 92, glow: true, size: 1.3, ...o }),
+  directory: (o) => new TokenModel({ kind: 'directory', category: 'security', color: '#9f1239', shape: 'cube', text: 'AD', fontSize: 104, glow: true, size: 1.3, ...o }),
+  ram: (o) => new TokenModel({ kind: 'ram', category: 'management', color: '#1d4ed8', shape: 'card', text: 'RAM', fontSize: 92, glow: true, size: 1.2, ...o }),
+  servicecatalog: (o) => new TokenModel({ kind: 'servicecatalog', category: 'management', color: '#1e40af', shape: 'cube', text: 'Catalog', fontSize: 52, glow: true, size: 1.4, ...o }),
+  grafana: (o) => new DashboardModel({ kind: 'grafana', category: 'management', chart: 'line', title: 'Grafana · p99', ...o }),
+  prometheus: (o) => new TokenModel({ kind: 'prometheus', category: 'management', color: '#c2410c', shape: 'cube', text: 'Prometheus', fontSize: 34, glow: true, size: 1.4, ...o }),
+  appconfig: (o) => new TokenModel({ kind: 'appconfig', category: 'management', color: '#1d4ed8', shape: 'card', text: 'AppConfig', fontSize: 42, glow: true, size: 1.4, ...o }),
+  sam: (o) => new TokenModel({ kind: 'sam', category: 'compute', color: '#c2410c', shape: 'card', text: 'SAM', fontSize: 96, glow: true, size: 1.4, ...o }),
+  codeartifact: (o) => new TokenModel({ kind: 'codeartifact', category: 'devtools', color: '#0f766e', shape: 'cube', text: 'Artifact', fontSize: 46, glow: true, size: 1.3, ...o }),
+  reachability: (o) => new TokenModel({ kind: 'reachability', category: 'network', color: '#7c3aed', shape: 'cube', text: 'Analyzer', fontSize: 44, glow: true, size: 1.3, ...o }),
+  resolver: (o) => new TokenModel({ kind: 'resolver', category: 'network', color: '#6d28d9', shape: 'cube', text: 'Resolver', fontSize: 44, glow: true, size: 1.2, ...o }),
+  imagebuilder: (o) => new TokenModel({ kind: 'imagebuilder', category: 'compute', color: '#c2410c', shape: 'cube', text: 'Builder', fontSize: 52, glow: true, size: 1.3, ...o }),
+  batch: (o) => new TokenModel({ kind: 'batch', category: 'compute', color: '#ea580c', shape: 'cube', text: 'Batch', fontSize: 68, glow: true, size: 1.4, ...o }),
+  emr: (o) => new TokenModel({ kind: 'emr', category: 'analytics', color: '#8f6d07', shape: 'cube', text: 'EMR', fontSize: 92, glow: true, size: 1.4, ...o }),
+  msk: (o) => new TokenModel({ kind: 'msk', category: 'analytics', color: '#a87e06', shape: 'cube', text: 'MSK', fontSize: 92, glow: true, size: 1.4, ...o }),
 };
 
 // flat platforms (AZ, Region, data centres…): zone-style labels, no hover glow, smoke when destroyed
