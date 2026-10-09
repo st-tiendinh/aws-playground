@@ -200,6 +200,20 @@ const FACTORY = {
   endpoint: (o) => new TokenModel({ kind: 'endpoint', category: 'ai', color: '#4338ca', shape: 'cube', text: 'Endpoint', fontSize: 44, glow: true, size: 1.3, ...o }),
   bedrock: (o) => new TokenModel({ kind: 'bedrock', category: 'ai', color: '#1e1b4b', shape: 'cube', text: 'Bedrock', fontSize: 48, glow: true, size: 1.5, ...o }),
   amazonq: (o) => new TokenModel({ kind: 'amazonq', category: 'ai', color: '#5b21b6', shape: 'cube', text: 'Q', fontSize: 120, glow: true, size: 1.2, ...o }),
+  // your first account: the root user (the sign-up e-mail) and the MFA device that guards it
+  root: (o) => {
+    const m = new PersonModel({ shirt: '#f59e0b', ...o });
+    m.kind = 'root';
+    return m;
+  },
+  mfa: (o) => new TokenModel({ kind: 'mfa', category: 'security', color: '#be123c', shape: 'card', text: 'MFA', fontSize: 90, glow: true, size: 1.0, ...o }),
+  // quick ways to put a website online: a Lightsail instance (a fixed monthly bundle) and Amplify Hosting
+  lightsail: (o) => {
+    const m = new EC2Model(o);
+    m.kind = 'lightsail';
+    return m;
+  },
+  amplify: (o) => new TokenModel({ kind: 'amplify', category: 'compute', color: '#c2410c', shape: 'cube', text: 'Amplify', fontSize: 50, glow: true, size: 1.4, ...o }),
 };
 
 // flat platforms (AZ, Region, data centres…): zone-style labels, no hover glow, smoke when destroyed

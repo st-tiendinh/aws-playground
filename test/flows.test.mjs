@@ -7,7 +7,7 @@ import * as catalogue from '../src/data/services.js';
 const { SERVICES } = catalogue;
 const SANDBOX_ACTIONS = new Set([null, 'quake', 'serverFail', 'spike', 'dbFail', 'ddos', 'sqlInjection', 'paymentDown', 'dataDelete', 'leakedKey', 'badDeploy', 'regionDown', 'report']);
 
-const KINDS = new Set(['ec2', 'elb', 's3', 'rds', 'dynamodb', 'lambda', 'apigw', 'igw', 'nat', 'external', 'cloudfront', 'edge', 'route53', 'users', 'user', 'az', 'zone', 'region', 'outline', 'subnet', 'globe', 'token', 'cloudwatch', 'sqs', 'iam', 'sns', 'cache', 'waf', 'shield', 'ecs', 'secrets', 'cognito', 'ebs', 'snapshot', 'kms', 'cloudtrail', 'eventbridge', 'cloudformation', 'budgets', 'costexplorer', 'acm', 'stepfunctions', 'efs', 'mount', 'ecr', 'aurora', 'resp', 'vpce', 'eni', 'sg', 'nacl', 'org', 'account', 'ou', 'scp', 'kinesis', 'firehose', 'ssm', 'param', 'backup', 'idc', 'permset', 'guardduty', 'finding', 'config', 'rule', 'advisor', 'miner', 'eks', 'pod', 'beanstalk', 'codepipeline', 'codebuild', 'codedeploy', 'xray', 'pcx', 'tgw', 'vgw', 'cgw', 'dx', 'drs', 'ga', 'athena', 'glue', 'catalog', 'lakeformation', 'table', 'board', 'redshift', 'quicksight', 'osdash', 'opensearch', 'onprem', 'server', 'localzone', 'wavelength', 'tower', 'outposts', 'pricing', 'cur', 'fsx', 'storagegateway', 'tape', 'docdb', 'neptune', 'keyspaces', 'memorydb', 'timestream', 'mgn', 'agent', 'dsagent', 'staging', 'dms', 'sct', 'datasync', 'transfer', 'snowball', 'rekognition', 'textract', 'transcribe', 'comprehend', 'translate', 'polly', 'lex', 'sagemaker', 'notebook', 'mlmodel', 'endpoint', 'bedrock', 'amazonq']);
+const KINDS = new Set(['ec2', 'elb', 's3', 'rds', 'dynamodb', 'lambda', 'apigw', 'igw', 'nat', 'external', 'cloudfront', 'edge', 'route53', 'users', 'user', 'az', 'zone', 'region', 'outline', 'subnet', 'globe', 'token', 'cloudwatch', 'sqs', 'iam', 'sns', 'cache', 'waf', 'shield', 'ecs', 'secrets', 'cognito', 'ebs', 'snapshot', 'kms', 'cloudtrail', 'eventbridge', 'cloudformation', 'budgets', 'costexplorer', 'acm', 'stepfunctions', 'efs', 'mount', 'ecr', 'aurora', 'resp', 'vpce', 'eni', 'sg', 'nacl', 'org', 'account', 'ou', 'scp', 'kinesis', 'firehose', 'ssm', 'param', 'backup', 'idc', 'permset', 'guardduty', 'finding', 'config', 'rule', 'advisor', 'miner', 'eks', 'pod', 'beanstalk', 'codepipeline', 'codebuild', 'codedeploy', 'xray', 'pcx', 'tgw', 'vgw', 'cgw', 'dx', 'drs', 'ga', 'athena', 'glue', 'catalog', 'lakeformation', 'table', 'board', 'redshift', 'quicksight', 'osdash', 'opensearch', 'onprem', 'server', 'localzone', 'wavelength', 'tower', 'outposts', 'pricing', 'cur', 'fsx', 'storagegateway', 'tape', 'docdb', 'neptune', 'keyspaces', 'memorydb', 'timestream', 'mgn', 'agent', 'dsagent', 'staging', 'dms', 'sct', 'datasync', 'transfer', 'snowball', 'rekognition', 'textract', 'transcribe', 'comprehend', 'translate', 'polly', 'lex', 'sagemaker', 'notebook', 'mlmodel', 'endpoint', 'bedrock', 'amazonq', 'root', 'mfa', 'lightsail', 'amplify']);
 const ACTIONS = new Set(['packet', 'stream', 'pulse', 'callout', 'beam', 'break', 'fix', 'quake', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count', 'flash', 'focus', 'shake', 'sound']);
 const STEP_KEYS = new Set(['key', 'title', 'text', 'dur', 'cam', 'run', 'loop', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count']);
 
@@ -53,6 +53,14 @@ for (const [id, flow] of Object.entries(FLOWS)) {
 for (const [kind, [sid, key]] of Object.entries(catalogue.LESSON_FOR || {})) {
   if (!KINDS.has(kind)) err(`LESSON_FOR.${kind}`, 'unknown model kind');
   if (!FLOWS[sid]?.steps.some((st) => st.key === key)) err(`LESSON_FOR.${kind}`, `no step "${key}" in flow "${sid}"`);
+}
+
+// the beginner path: real lessons, each once
+const pathIds = (catalogue.BEGINNER_PATH || []).map((p) => p.id);
+if (new Set(pathIds).size !== pathIds.length) err('BEGINNER_PATH', 'a lesson is listed twice');
+for (const p of catalogue.BEGINNER_PATH || []) {
+  if (!SERVICES.some((s) => s.id === p.id)) err('BEGINNER_PATH', `no lesson "${p.id}"`);
+  if (!p.why) err('BEGINNER_PATH', `"${p.id}" needs a why`);
 }
 
 // "try it in the sandbox": one suggestion, or a list of labelled ones

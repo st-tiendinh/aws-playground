@@ -1,7 +1,7 @@
 // Explore mode, bottom dock: narration of the current step with play / pause / step controls.
 import { useEffect, useRef, useState } from 'react';
 import { FLOWS } from '../data/flows.js';
-import { serviceById } from '../data/services.js';
+import { BEGINNER_PATH, serviceById } from '../data/services.js';
 import { useApp, useUi } from '../state/store.js';
 import { Icon } from './icons.jsx';
 
@@ -45,6 +45,10 @@ export function FlowStepper() {
 
   if (!flow || !cur) return null;
   const last = step === count - 1;
+  // on the beginner path, the end of a lesson leads straight to the next one
+  const at = BEGINNER_PATH.findIndex((p) => p.id === id);
+  const nextId = at >= 0 ? BEGINNER_PATH[at + 1]?.id : null;
+  const nextSvc = nextId && FLOWS[nextId] ? serviceById(nextId) : null;
 
   return (
     <section className="stepper" aria-live="polite">
@@ -87,7 +91,14 @@ export function FlowStepper() {
         <button className="icon-btn" onClick={() => engine.explore.replay()} aria-label="Xem lại bước này" title="Xem lại bước này">
           <Icon name="replay" />
         </button>
-        {last && done && <span className="done-note">Xong! Chọn dịch vụ khác hoặc thử trong Sandbox.</span>}
+        {last && nextSvc ? (
+          <button className="btn btn-primary btn-small next-lesson" onClick={() => engine.explore.load(nextId)} title={`Bài ${at + 2}/${BEGINNER_PATH.length} trong Lộ trình người mới`}>
+            Bài tiếp: {nextSvc.short}
+            <Icon name="arrowRight" size={15} />
+          </button>
+        ) : (
+          last && done && <span className="done-note">{at >= 0 ? 'Xong cả lộ trình! Học tiếp ở tab Tất cả hoặc thử Sandbox.' : 'Xong! Chọn dịch vụ khác hoặc thử trong Sandbox.'}</span>
+        )}
       </div>
     </section>
   );
