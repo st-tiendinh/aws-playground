@@ -426,6 +426,13 @@ const GLYPH = {
       <circle cx="12" cy="12" r="2.6" />
     </>
   ),
+  // a brick wall across the network (Network Firewall)
+  firewall: (
+    <>
+      <rect x="3" y="5" width="18" height="14" rx="1.5" />
+      <path d="M3 9.7h18M3 14.3h18M9 5v4.7M15 5v4.7M6 9.7v4.6M12 9.7v4.6M18 9.7v4.6M9 14.3V19M15 14.3V19" />
+    </>
+  ),
   cloudwatch: (
     <>
       <rect x="3" y="4" width="18" height="13" rx="2" />
@@ -630,7 +637,7 @@ export function Glyph({ name, size = 18, stroke = 1.8 }) {
 }
 
 // model kinds without a lesson of their own take the colour of the lesson that explains them
-const KIND_TO_SERVICE = { root: 'firstaccount', mfa: 'firstaccount', amplify: 'lightsail', rekognition: 'aiservices', textract: 'aiservices', transcribe: 'aiservices', comprehend: 'aiservices', translate: 'aiservices', polly: 'aiservices', lex: 'aiservices', notebook: 'sagemaker', mlmodel: 'sagemaker', endpoint: 'sagemaker', amazonq: 'sagemaker', kb: 'bedrock', guardrail: 'bedrock', agentcore: 'bedrock', inspector: 'securityhub', macie: 'securityhub', sts: 'iam', health: 'cloudwatch', quotas: 'trustedadvisor', optimizer: 'budgets', controltower: 'organizations', cdk: 'cloudformation', rdsproxy: 'rds', clientvpn: 'vpn', agent: 'migrate', dsagent: 'datatransfer', staging: 'migrate', mgn: 'migrate', sct: 'dms', datasync: 'datatransfer', transfer: 'datatransfer', snowball: 'datatransfer', tape: 'storagegateway', docdb: 'purposedb', neptune: 'purposedb', keyspaces: 'purposedb', memorydb: 'purposedb', timestream: 'purposedb', onprem: 'cloud', server: 'cloud', localzone: 'foundation', wavelength: 'foundation', tower: 'foundation', outposts: 'foundation', pricing: 'budgets', cur: 'budgets', firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
+const KIND_TO_SERVICE = { root: 'firstaccount', mfa: 'firstaccount', amplify: 'lightsail', rekognition: 'aiservices', textract: 'aiservices', transcribe: 'aiservices', comprehend: 'aiservices', translate: 'aiservices', polly: 'aiservices', lex: 'aiservices', notebook: 'sagemaker', mlmodel: 'sagemaker', endpoint: 'sagemaker', amazonq: 'sagemaker', kb: 'bedrock', guardrail: 'bedrock', agentcore: 'bedrock', inspector: 'securityhub', macie: 'securityhub', sts: 'iam', health: 'cloudwatch', quotas: 'trustedadvisor', optimizer: 'budgets', controltower: 'organizations', cdk: 'cloudformation', rdsproxy: 'rds', clientvpn: 'vpn', netfw: 'firewall', fms: 'firewall', dnsfw: 'route53', resolver: 'route53', mq: 'sqs', appsync: 'apigw', detective: 'securityhub', cloudhsm: 'kms', directory: 'identitycenter', ram: 'organizations', servicecatalog: 'cloudformation', grafana: 'cloudwatch', prometheus: 'cloudwatch', appconfig: 'ssm', sam: 'lambda', codeartifact: 'codepipeline', reachability: 'vpc', imagebuilder: 'asg', batch: 'ecs', emr: 'athena', msk: 'kinesis', agent: 'migrate', dsagent: 'datatransfer', staging: 'migrate', mgn: 'migrate', sct: 'dms', datasync: 'datatransfer', transfer: 'datatransfer', snowball: 'datatransfer', tape: 'storagegateway', docdb: 'purposedb', neptune: 'purposedb', keyspaces: 'purposedb', memorydb: 'purposedb', timestream: 'purposedb', onprem: 'cloud', server: 'cloud', localzone: 'foundation', wavelength: 'foundation', tower: 'foundation', outposts: 'foundation', pricing: 'budgets', cur: 'budgets', firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
 const SPECIAL = { users: ['#0ea5e9', 'users'], user: ['#0ea5e9', 'users'], external: ['#0891b2', 'foundation'] };
 
 export function ServiceIcon({ id, size = 34, glyph }) {

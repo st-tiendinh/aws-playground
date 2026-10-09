@@ -1908,6 +1908,8 @@ export const FLOWS = {
       { id: 'cw', kind: 'cloudwatch', pos: [15, 0, -1], label: 'CloudWatch', sub: 'CPU trung bình' },
       { id: 'lt', kind: 'token', shape: 'card', text: 'LT', fontSize: 96, color: '#9a3412', pos: [13.8, 0, 5.6], size: 1.3, label: 'Launch template', sub: 'v1 · AMI · m7g.large · SG…', hidden: true },
       { id: 'sched', kind: 'token', shape: 'card', text: '19:30', fontSize: 72, color: '#9d174d', pos: [13.8, 0, -6.2], size: 1.3, label: 'Scheduled action', sub: 'mỗi tối 19:30 · min 6', hidden: true },
+      // a pipeline that bakes the patched AMI every week: EC2 Image Builder
+      { id: 'ib', kind: 'imagebuilder', pos: [16, 0, 2.3], label: 'Image Builder', sub: 'pipeline golden AMI', hidden: true },
     ],
     steps: [
       {
@@ -1987,6 +1989,21 @@ export const FLOWS = {
         dur: 9,
         run: [{ do: 'label', node: 'grp', sub: 'min 2 · desired 2 · max 10', at: 1.2 }, hide('s4', 1.6), hide('s5', 2.1), at(1.8, co('grp', 'Scale in: −2 EC2', 'good', { dy: 3 })), at(4.4, co('s2', 'mỗi AZ vẫn còn 1 máy ✓', 'good', { dur: 2.8 }))],
         loop: { every: 1.4, run: [pk('crowd', 's1', { via: ['elb'], size: 0.7 }), at(0.7, pk('crowd', 's2', { via: ['elb'], size: 0.7 }))] },
+      },
+      {
+        key: 'imagebuilder',
+        title: 'EC2 Image Builder: tự đóng AMI đã vá',
+        text: 'Đóng AMI bằng tay mỗi lần có bản vá rất dễ sót. EC2 Image Builder chạy pipeline theo lịch: lấy AMI gốc mới nhất, cài bản vá và phần mềm theo recipe, chạy test, đạt mới phân phối — sang Region, tài khoản khác, cập nhật luôn launch template. Không tính phí riêng, chỉ trả EC2, EBS lúc build.',
+        cam: { target: [11, 1, 2], dist: 22 },
+        show: ['ib', 'lt'],
+        dur: 13,
+        run: [
+          at(0.4, co('ib', 'lịch: Chủ nhật 01:00', 'info', { dy: 1.8, dur: 2.4 })),
+          at(3, co('ib', 'recipe: AMI gốc + bản vá + app', 'info', { dy: 1.8, dur: 2.4 })),
+          at(5.6, co('ib', 'test đạt ✓ → phân phối', 'good', { dy: 1.8, dur: 2.2 })),
+          at(7.4, pk('ib', 'lt', { shape: 'card', label: 'AMI mới đã vá', color: '#fde68a', speed: 5, then: [{ do: 'label', node: 'lt', sub: 'v2 · AMI mới đã vá' }, co('lt', 'launch template v2 ✓', 'good', { dy: 1.2, dur: 2.4 })] })),
+          at(10.4, co('grp', 'tiếp theo: instance refresh', 'info', { dy: 3, dur: 2.4 })),
+        ],
       },
       {
         title: 'Instance refresh: lên launch template v2',
@@ -3577,6 +3594,8 @@ export const FLOWS = {
       { id: 'env', kind: 'token', shape: 'card', text: 'ENV', fontSize: 84, color: '#334155', pos: [8.6, 0, -7.4], size: 1.2, label: 'Biến môi trường', sub: 'TABLE_NAME=orders', hidden: true },
       { id: 'bkt', kind: 's3', pos: [12, 0, -8.2], label: 'S3', sub: 'bucket báo cáo', hidden: true },
       { id: 'logs', kind: 'cloudwatch', title: 'Log / phút', pos: [11.5, 0, -1.6], label: 'CloudWatch Logs', sub: '/aws/lambda/hello', hidden: true },
+      // the whole app (function, API, table) described in one SAM template
+      { id: 'sam', kind: 'sam', pos: [-8.5, 0, -7.5], label: 'template.yaml', sub: 'AWS SAM', hidden: true },
     ],
     steps: [
       {
@@ -3756,10 +3775,29 @@ export const FLOWS = {
         loop: { every: 0.3, run: [pk('gw', 'fn', { size: 0.6, speed: 11 }), at(0.15, pk('fn', 'rds', { color: DB, size: 0.6, speed: 10 }))] },
       },
       {
+        key: 'sam',
+        advanced: true,
+        title: 'AWS SAM: cả app serverless trong một template',
+        text: 'Hàm nhiều lên thì bấm console không còn ổn. AWS SAM là CloudFormation rút gọn cho serverless: vài dòng AWS::Serverless::Function đã kèm API, quyền, log. sam local invoke chạy thử hàm trên máy, sam deploy tạo stack; DeploymentPreference cho CodeDeploy chuyển traffic dần sang bản mới. Miễn phí.',
+        cam: { target: [0.5, 1, -4.5], dist: 28 },
+        hide: ['rds'],
+        show: ['sam', 'gw', 'ddb'],
+        count: { fn: 2 },
+        load: { rds: 0 },
+        label: { fn: ['Lambda function', 'hello'] },
+        dur: 13,
+        run: [
+          at(0.4, co('sam', 'Transform: AWS::Serverless-2016-10-31', 'info', { dy: 1.4, dur: 3 })),
+          at(2.8, pk('sam', 'code', { shape: 'card', label: 'sam local invoke', color: CYAN, speed: 5, then: [co('code', 'chạy thử trên máy ✓', 'good', { dy: 1.4, dur: 2.4 })] })),
+          ...fan('sam', ['gw', 'fn', 'ddb'], { shape: 'card', label: 'sam deploy', color: '#f9a8d4', speed: 5 }).map((a, i) => at(5.6 + i * 0.4, a)),
+          at(8.6, co('fn', 'canary 10% → CodeDeploy', 'info', { dur: 3 })),
+        ],
+      },
+      {
         title: 'Hết việc → về 0: trả tiền theo request',
         text: 'Hết request, môi trường dần bị thu hồi: không chạy thì không tốn tiền. Tiền tính theo request ($0,20 mỗi 1 triệu) cộng thời gian chạy × bộ nhớ (GB-giây); Free Tier mỗi tháng, không hết hạn: 1 triệu request và 400.000 GB-giây. Việc dài hơn 15 phút, hay tải nặng đều đặn cả ngày, thì Step Functions, Fargate hoặc EC2 hợp hơn.',
         cam: { target: [2.5, 1, -3.5], dist: 22 },
-        hide: ['rds'],
+        hide: ['rds', 'sam'],
         count: { fn: 0 },
         load: { rds: 0 },
         label: { fn: ['Lambda function', 'hello'] },
@@ -3789,6 +3827,9 @@ export const FLOWS = {
       { id: 'ops', kind: 'user', pos: [10.5, 0, -6.5], label: 'Bạn', sub: 'tự vận hành máy', hidden: true },
       { id: 'fn', kind: 'lambda', pos: [10.5, 0, 5.5], label: 'Lambda', sub: 'tối đa 15 phút mỗi lần chạy', hidden: true },
       { id: 'job', kind: 'token', shape: 'card', text: 'Job', color: '#854d0e', pos: [3, 0, 6.5], size: 1.1, label: 'Job xuất báo cáo', sub: 'chạy ~40 phút', hidden: true },
+      // thousands of batch jobs waiting in a queue: AWS Batch
+      { id: 'jobq', kind: 'token', shape: 'card', text: 'Queue', fontSize: 62, color: '#9a3412', pos: [-8.5, 0, 5], size: 1.2, label: 'Job queue', sub: '1.000 ảnh cần xử lý', hidden: true },
+      { id: 'batch', kind: 'batch', pos: [-3.5, 0, 5], label: 'AWS Batch', sub: 'compute env: Spot · Fargate', hidden: true },
     ],
     steps: [
       {
@@ -3880,10 +3921,25 @@ export const FLOWS = {
         ],
       },
       {
+        key: 'batch',
+        title: 'AWS Batch: hàng nghìn job xếp hàng',
+        text: 'Không phải một job mà hàng nghìn — xử lý 1.000 ảnh, render video mỗi đêm? AWS Batch nhận job vào job queue có thứ tự ưu tiên, tự bật compute environment (EC2, Spot, Fargate) vừa đủ, chạy hết rồi tắt máy. Array job chạy tới 10.000 bản của một job definition. Không tính phí riêng.',
+        cam: { target: [-0.5, 1, 2.5], dist: 27 },
+        show: ['jobq', 'batch'],
+        dur: 12,
+        run: [
+          at(0.5, pk('jobq', 'batch', { shape: 'card', label: 'array job × 1.000', color: '#fde68a', speed: 5, then: [co('batch', 'tự chọn máy vừa đủ', 'info', { dy: 2, dur: 2.6 })] })),
+          at(3.2, { do: 'stream', from: 'batch', to: 'fargate', n: 6, every: 0.3, shape: 'card', color: '#fde68a', size: 0.7 }),
+          at(3.4, { do: 'stream', from: 'batch', to: 'ec2host', n: 6, every: 0.3, shape: 'card', color: '#fde68a', size: 0.7, label: 'Spot' }),
+          at(6.4, co('ec2host', 'Spot: rẻ hơn tới 90%', 'info', { dur: 2.6 })),
+          at(9, co('batch', '1.000/1.000 xong · tắt máy ✓', 'good', { dy: 2, dur: 2.6 })),
+        ],
+      },
+      {
         title: 'Lambda, Fargate hay EC2?',
-        text: 'Lambda: việc ngắn theo sự kiện, không có request thì gần như không tốn tiền. Fargate: container chạy lâu dài mà không quản lý máy chủ. EC2: cần toàn quyền với máy, GPU, hoặc tải lớn đều đặn cần tối ưu chi phí.',
+        text: 'Lambda: việc ngắn theo sự kiện, không có request thì gần như không tốn tiền. Fargate: container chạy lâu dài mà không quản lý máy chủ. EC2: cần toàn quyền với máy, GPU, hoặc tải lớn đều đặn cần tối ưu chi phí. Batch: hàng loạt job xếp hàng, chạy xong tự tắt máy.',
         cam: { target: [6, 1, 1], dist: 26 },
-        run: [at(0.5, co('fn', 'ngắn · theo sự kiện', 'info', { dur: 3.5 })), at(1.7, co('fargate', 'container · chạy lâu', 'info', { dy: 1.7, dur: 3.5 })), at(2.9, co('ec2host', 'toàn quyền · GPU', 'info', { dur: 3.5 }))],
+        run: [at(0.5, co('fn', 'ngắn · theo sự kiện', 'info', { dur: 3.5 })), at(1.7, co('fargate', 'container · chạy lâu', 'info', { dy: 1.7, dur: 3.5 })), at(2.9, co('ec2host', 'toàn quyền · GPU', 'info', { dur: 3.5 })), at(4.1, co('batch', 'hàng loạt job · xếp hàng', 'info', { dy: 2, dur: 3.5 }))],
       },
     ],
   },
@@ -4403,6 +4459,9 @@ export const FLOWS = {
       { id: 'tHttp', kind: 'token', shape: 'card', text: 'HTTP', fontSize: 84, color: '#db2777', pos: [-9, 0, -8.5], size: 1.2, label: 'HTTP API', sub: '~$1 / triệu request', hidden: true },
       { id: 'tRest', kind: 'token', shape: 'card', text: 'REST', fontSize: 84, color: '#be185d', pos: [-3, 0, -8.5], size: 1.2, label: 'REST API', sub: '~$3,50 / triệu request', hidden: true },
       { id: 'tWs', kind: 'token', shape: 'card', text: 'WS', color: '#9d174d', pos: [3, 0, -8.5], size: 1.2, label: 'WebSocket API', sub: 'kết nối hai chiều', hidden: true },
+      // GraphQL: one query, several data sources, live updates — AWS AppSync
+      { id: 'appsync', kind: 'appsync', pos: [-3, 0, 5.5], label: 'AWS AppSync', sub: 'GraphQL API', hidden: true },
+      { id: 'ddb', kind: 'dynamodb', pos: [5.5, 0, 5], label: 'DynamoDB', sub: 'bảng products', small: true, hidden: true },
     ],
     steps: [
       {
@@ -4513,6 +4572,22 @@ export const FLOWS = {
           at(4.2, co('tWs', 'chat · thông báo trực tiếp', 'info', { dy: 2, dur: 3 })),
         ],
         loop: { every: 2, run: [pk('app', 'fn', { via: ['gw'], label: 'GET /products', back: { label: '200', color: OK } })] },
+      },
+      {
+        key: 'appsync',
+        title: 'AppSync: GraphQL — hỏi đúng thứ màn hình cần',
+        text: 'Màn hình sản phẩm cần tên, giá từ DynamoDB và 3 đánh giá mới nhất từ một Lambda: với REST là nhiều lần gọi. AWS AppSync dựng API GraphQL — app gửi một câu query nêu đúng trường cần, resolver lấy từ từng nguồn rồi ghép lại; subscription đẩy giá mới tới app qua WebSocket. $4 mỗi triệu query/mutation (us-east-1).',
+        cam: { target: [-2.5, 1, 1.5], dist: 26 },
+        hide: ['tHttp', 'tRest', 'tWs'],
+        show: ['appsync', 'ddb'],
+        dur: 13,
+        run: [
+          at(0.5, pk('app', 'appsync', { label: '{ product { name price reviews(3) } }', color: REQ, speed: 6, then: [co('appsync', '1 query · 2 nguồn', 'info', { dy: 2, dur: 2.6 })] })),
+          at(2.2, pk('appsync', 'ddb', { label: 'resolver', color: DB, size: 0.8, back: { label: 'name · price', color: OK } })),
+          at(2.4, pk('appsync', 'fn', { label: 'resolver', color: CYAN, size: 0.8, back: { label: '3 đánh giá', color: OK } })),
+          at(5.8, pk('appsync', 'app', { shape: 'card', label: 'đúng các trường cần', color: OK, speed: 6 })),
+          at(8.6, pk('ddb', 'appsync', { label: 'giá đổi', color: REQ, size: 0.8, then: [pk('appsync', 'app', { label: 'subscription: giá mới', color: PURPLE, speed: 7, then: [co('app', 'cập nhật tức thì ✓', 'good', { dy: 2.2 })] })] })),
+        ],
       },
     ],
   },
@@ -4669,6 +4744,14 @@ export const FLOWS = {
       { id: 'v2', kind: 'elb', pos: [8, 0.25, -4], label: 'Bản mới v2', sub: 'weight 10', hidden: true },
       { id: 'us', kind: 'elb', pos: [3.5, 0.25, 4.2], label: 'Website', sub: 'ALB · us-east-1', hidden: true },
       { id: 'backup', kind: 's3', pos: [8, 0.25, 4.2], label: 'Trang dự phòng', sub: 'S3 static website', hidden: true },
+      // DNS inside a VPC: the VPC Resolver, endpoints towards the office's DNS, the DNS Firewall
+      { id: 'vpcR', kind: 'outline', pos: [3.5, 0.06, 4.4], w: 16, d: 6.4, r: 1, color: '#8C4FFF', label: 'VPC · Singapore', sub: '10.0.0.0/16', labelPos: [-4.5, 0.4, -3.6], hidden: true },
+      { id: 'inEp', kind: 'resolver', pos: [-2.5, 0, 2.9], size: 1, label: 'Inbound endpoint', small: true, hidden: true },
+      { id: 'outEp', kind: 'resolver', pos: [-2.5, 0, 6], size: 1, label: 'Outbound endpoint', small: true, hidden: true },
+      { id: 'vres', kind: 'resolver', pos: [2.5, 0, 4.4], label: 'VPC Resolver', sub: '10.0.0.2 · VPC+2', hidden: true },
+      { id: 'dnsfw', kind: 'dnsfw', pos: [6, 0, 4.4], label: 'DNS Firewall', sub: 'rule group', small: true, hidden: true },
+      { id: 'app', kind: 'ec2', pos: [9.5, 0, 4.4], label: 'App', sub: 'EC2 trong VPC', small: true, hidden: true },
+      { id: 'office', kind: 'external', pos: [-11, 0, 3], radius: 1.6, label: 'Văn phòng', sub: 'DNS nội bộ corp.local', hidden: true },
     ],
     steps: [
       {
@@ -4776,6 +4859,45 @@ export const FLOWS = {
         ],
         loop: { start: 0.5, every: 1.6, run: [pk('user', 'main', { label: 'GET /', size: 0.8, back: { label: '200 OK', color: OK } }), at(0.8, pk('userUs', 'us', { size: 0.8, back: { color: OK } }))] },
       },
+      {
+        key: 'resolver',
+        advanced: true,
+        title: 'VPC Resolver: DNS giữa VPC và văn phòng',
+        text: 'Trong VPC, máy hỏi DNS qua Route 53 VPC Resolver (tên cũ: Route 53 Resolver) ở địa chỉ VPC+2, trả lời cả private hosted zone như shop.internal. Văn phòng nối qua VPN cần hỏi chéo: inbound endpoint nhận câu hỏi từ văn phòng; outbound endpoint cùng forwarding rule gửi câu hỏi corp.local về văn phòng. $0,125 mỗi ENI-giờ.',
+        cam: { target: [-1.5, 1, 2.5], dist: 28 },
+        hide: ['zUs', 'us', 'userUs', 'backup', 'user'],
+        show: ['vpcR', 'inEp', 'outEp', 'vres', 'app', 'office'],
+        dur: 13,
+        run: [
+          at(0.4, pk('app', 'vres', { label: 'orders.shop.internal ?', color: DNS, then: [co('vres', 'private hosted zone', 'info', { dy: 1.8, dur: 2.4 })], back: { label: '10.0.2.15', color: DNS } })),
+          at(3.8, pk('app', 'office', { via: ['vres', 'outEp'], label: 'db.corp.local ?', color: DNS, back: { label: '192.168.1.20', color: DNS } })),
+          at(4.8, co('outEp', 'rule: corp.local → văn phòng', 'info', { dy: 1.6, dur: 2.6 })),
+          at(8.4, pk('office', 'vres', { via: ['inEp'], label: 'orders.shop.internal ?', color: DNS, back: { label: '10.0.2.15', color: DNS } })),
+          at(9, co('inEp', 'văn phòng hỏi vào VPC', 'info', { dy: 1.6, dur: 2.6 })),
+        ],
+      },
+      {
+        key: 'dnsfw',
+        advanced: true,
+        title: 'DNS Firewall: chặn ngay từ câu hỏi DNS',
+        text: 'Máy nhiễm mã độc thường hỏi DNS tên miền điều khiển trước khi kết nối. DNS Firewall gắn rule group vào VPC: danh sách tên miền tự tạo hoặc do AWS quản lý (malware, botnet), hành động ALLOW, ALERT hay BLOCK (trả NXDOMAIN). Bản Advanced bắt cả DNS tunneling, tên miền sinh tự động. $0,60 mỗi triệu truy vấn.',
+        cam: { target: [3, 1, 3], dist: 22 },
+        show: ['dnsfw'],
+        label: { app: ['App', 'một máy nhiễm mã độc'] },
+        dur: 12,
+        run: [
+          at(0.4, co('dnsfw', 'list AWS: malware · botnet', 'info', { dy: 1.4, dur: 2.6 })),
+          at(7.6, co('app', 'mã độc không tìm được đường về ✓', 'good', { dy: 1.8, dur: 2.8 })),
+        ],
+        loop: {
+          start: 1,
+          every: 4,
+          run: [
+            pk('app', 'vres', { via: ['dnsfw'], label: 'api.stripe.com ?', color: DNS, back: { label: 'IP ✓', color: OK } }),
+            at(1.8, pk('app', 'dnsfw', { label: 'c2-evil.example ?', color: BAD, fail: 'bounce', then: [{ do: 'flash', node: 'dnsfw', kind: 'deny' }, co('dnsfw', 'BLOCK · NXDOMAIN', 'bad', { dy: 1.4 })] })),
+          ],
+        },
+      },
     ],
   },
 
@@ -4828,6 +4950,8 @@ export const FLOWS = {
       { id: 'rtPeer', kind: 'token', shape: 'card', text: 'RT', color: '#4c1d95', pos: [-12, 0, -11.2], size: 1.0, label: 'Route table · VPC B', sub: 'chỉ có route local', hidden: true },
       { id: 'office', kind: 'external', pos: [-13, 0, 4.5], radius: 1.8, label: 'Văn phòng công ty', sub: '192.168.0.0/16', hidden: true },
       { id: 'tgw', kind: 'tgw', pos: [-6.5, 0, 4.5], size: 1.3, label: 'Transit Gateway', sub: 'hub nối VPC · VPN', hidden: true },
+      // checking a path from the configuration alone: VPC Reachability Analyzer
+      { id: 'reach', kind: 'reachability', pos: [-7.5, 0, 6.5], label: 'Reachability Analyzer', sub: 'nguồn → đích · cổng', hidden: true },
     ],
     steps: [
       {
@@ -5101,12 +5225,28 @@ export const FLOWS = {
         },
       },
       {
+        key: 'reach',
+        advanced: true,
+        title: 'Reachability Analyzer: vì sao không kết nối được?',
+        text: 'Máy khác không gọi được database — tại SG, NACL hay route table? VPC Reachability Analyzer đọc cấu hình đường đi giữa nguồn và đích, không gửi gói thật: thông thì liệt kê từng chặng, không thông thì chỉ đúng thành phần chặn. $0,10 mỗi lần phân tích; còn traffic thật thì xem Flow Logs.',
+        cam: { target: [2, 1, 1.5], dist: 30 },
+        hide: ['hacker', 'logs', 'user'],
+        show: ['reach', 'other', 'sgDb', 'db'],
+        dur: 13,
+        run: [
+          at(0.5, co('other', 'không gọi được database?', 'warn', { dy: 2.2, dur: 2.6 })),
+          at(2.4, pk('reach', 'db', { via: ['other'], label: 'other → db :3306 · chỉ đọc cấu hình', color: PURPLE, fail: 'bounce', then: [co('sgDb', 'SG-db: không có rule cho nguồn này ✗', 'bad', { dy: 1.6, dur: 3 })] })),
+          at(6.4, co('reach', 'Not reachable · chặn tại SG-db', 'bad', { dy: 2, dur: 3 })),
+          at(9.4, pk('reach', 'db', { via: ['webA'], label: 'webA → db :3306', color: PURPLE, then: [co('db', 'Reachable ✓ · đủ từng chặng', 'good', { dy: 2.5, dur: 2.8 })] })),
+        ],
+      },
+      {
         key: 'peering',
         advanced: true,
         title: 'VPC Peering: nối hai VPC bằng IP riêng',
         text: 'VPC Peering nối hai VPC một-một — cùng hay khác tài khoản, cùng hay khác Region. Một bên gửi yêu cầu, bên kia chấp nhận; rồi mỗi bên tự thêm route trỏ dải IP bên kia vào kết nối peering. Hai dải IP không được trùng nhau, và Security Group phải cho dải IP bên kia vào.',
         cam: { target: [-6, 1, -5.6], dist: 25 },
-        hide: ['hacker', 'logs', 'sgWeb', 'user'],
+        hide: ['hacker', 'logs', 'sgWeb', 'user', 'reach', 'other', 'sgDb', 'db'],
         show: ['peer', 'peerApp', 'rtPub', 'rtPeer'],
         dur: 13,
         run: [
@@ -5631,6 +5771,9 @@ export const FLOWS = {
       { id: 'dev', kind: 'account', text: 'Dev', pos: [11, 0, 1], label: 'team-dev', sub: 'member account', hidden: true },
       { id: 'data', kind: 'account', text: 'Data', pos: [11, 0, 7], label: 'data-lake', sub: 'member account', hidden: true },
       { id: 'key', kind: 'token', shape: 'card', text: 'AKIA…', fontSize: 56, color: '#b91c1c', pos: [-8, 0, 8.5], size: 1.1, label: 'Access key dài hạn', sub: 'IAM user', hidden: true },
+      // the company's Active Directory, and the one AWS runs for you: Directory Service
+      { id: 'corp', kind: 'server', pos: [-16, 0, -8.5], label: 'AD công ty', sub: 'on-premises', small: true, hidden: true },
+      { id: 'ad', kind: 'directory', pos: [-12, 0, -8.5], label: 'Managed Microsoft AD', sub: '2 domain controller · 2 AZ', hidden: true },
     ],
     steps: [
       {
@@ -5668,6 +5811,20 @@ export const FLOWS = {
           at(0.6, pk('idp', 'idc', { label: 'SCIM: đồng bộ user/group', color: '#93c5fd', speed: 5 })),
           at(2.6, co('idp', 'SAML: đăng nhập bằng tài khoản công ty', 'info', { dy: 2.2, dur: 3 })),
           at(5.6, co('lan', 'MFA khi đăng nhập ✓', 'good', { dy: 2.9, dur: 2.8 })),
+        ],
+      },
+      {
+        key: 'ad',
+        title: 'Active Directory sẵn có: Directory Service',
+        text: 'Công ty đã có Microsoft Active Directory? AWS Managed Microsoft AD (thuộc Directory Service) là AD thật trên 2 domain controller ở 2 AZ, tạo trust với AD on-premises; AD Connector chỉ chuyển tiếp đăng nhập về AD sẵn có. Identity Center dùng AD làm identity source; WorkSpaces, FSx for Windows cũng dùng chung.',
+        cam: { target: [-9, 1, -3.5], dist: 22 },
+        show: ['corp', 'ad'],
+        dur: 11,
+        run: [
+          at(0.5, pk('corp', 'ad', { label: 'trust', color: '#93c5fd', speed: 5, back: { label: 'trust', color: '#93c5fd' } })),
+          at(3.4, co('ad', 'AD thật · AWS vá và sao lưu', 'info', { dy: 2, dur: 2.6 })),
+          at(5.2, pk('ad', 'idc', { label: 'identity source: AD', color: '#93c5fd', speed: 5 })),
+          at(7.8, co('lan', 'đăng nhập bằng tài khoản AD ✓', 'good', { dy: 2.9, dur: 2.8 })),
         ],
       },
       {
@@ -5863,6 +6020,9 @@ export const FLOWS = {
       { id: 'trail', kind: 'cloudtrail', pos: [7, 0, 5], label: 'CloudTrail', sub: 'nhật ký dùng khoá', rows: ['CreateKey · admin'], hidden: true },
       { id: 'ebs', kind: 'ebs', pos: [13.5, 0, -7], label: 'EBS', sub: 'volume mã hoá', small: true, hidden: true },
       { id: 'rds', kind: 'rds', pos: [13.5, 0, -1], label: 'RDS', sub: 'database mã hoá', small: true, hidden: true },
+      // a hardware security module of your own: AWS CloudHSM
+      { id: 'hsm', kind: 'cloudhsm', pos: [12.5, 0, 3.5], label: 'AWS CloudHSM', sub: 'cluster · 2 HSM · 2 AZ', hidden: true },
+      { id: 'payApp', kind: 'ec2', pos: [4, 0, 5.5], label: 'App thanh toán', sub: 'PKCS#11 · JCE', small: true, hidden: true },
     ],
     steps: [
       {
@@ -5957,6 +6117,21 @@ export const FLOWS = {
           at(0.6, pk('ebs', 'kms', { shape: 'card', label: 'GenerateDataKey', color: PURPLE, size: 0.8, then: [{ do: 'flash', node: 'kms', kind: 'allow' }] })),
           at(1.8, pk('rds', 'kms', { shape: 'card', label: 'GenerateDataKey', color: PURPLE, size: 0.8, then: [{ do: 'flash', node: 'kms', kind: 'allow' }] })),
           at(4.4, co('kms', 'xoá khoá: chờ 7–30 ngày', 'warn', { dy: 1.2, dur: 3.5 })),
+        ],
+      },
+      {
+        key: 'cloudhsm',
+        title: 'CloudHSM: HSM của riêng bạn',
+        text: 'Quy định buộc khoá nằm trong HSM chỉ mình bạn dùng? AWS CloudHSM cấp HSM riêng (FIPS 140-3 mức 3) trong VPC: bạn tự quản lý user và khoá — AWS không đọc được, mất thông tin đăng nhập là mất khoá. App gọi qua PKCS#11, JCE; KMS dùng nó làm custom key store. $1,60 mỗi HSM-giờ, chạy ít nhất 2 HSM ở 2 AZ.',
+        cam: { target: [8.5, 1, 1], dist: 22 },
+        hide: ['trail', 'ebs', 'rds'],
+        show: ['hsm', 'payApp'],
+        dur: 12,
+        run: [
+          at(0.5, co('hsm', 'single-tenant · chỉ bạn giữ khoá', 'info', { dy: 1.8, dur: 3 })),
+          at(2.4, pk('payApp', 'hsm', { label: 'ký giao dịch · PKCS#11', color: CYAN, speed: 5, back: { label: 'chữ ký', color: OK, shape: 'card' } })),
+          at(6.2, pk('kms', 'hsm', { shape: 'card', label: 'custom key store', color: PURPLE, speed: 5, then: [co('kms', 'khoá KMS nằm trong HSM của bạn', 'good', { dy: 1.2, dur: 2.8 })] })),
+          at(9.4, co('hsm', 'AWS không khôi phục được khoá', 'warn', { dy: 1.8, dur: 2.6 })),
         ],
       },
     ],
@@ -6359,6 +6534,243 @@ export const FLOWS = {
     ],
   },
 
+  // ── Network Firewall + Firewall Manager ────────────────────────────────────
+  // the shop VPC in the middle: the firewall subnet with its endpoint next to the Internet Gateway,
+  // the public subnet with the web and app servers; rule groups, route tables, the Transit Gateway
+  // and the organisation's accounts take turns on the row behind the VPC
+  firewall: {
+    stage: { w: 30, d: 18, pos: [1, 0, -3.5] },
+    cam: { target: [-2.8, 1, -1.5], dist: 28 },
+    nodes: [
+      { id: 'user', kind: 'user', pos: [-11, 0, -1], label: 'Khách hàng' },
+      { id: 'attacker', kind: 'user', shirt: '#ef4444', pos: [-11, 0, 3], label: 'Kẻ tấn công', sub: '198.51.100.7', hidden: true },
+      { id: 'okSite', kind: 'external', pos: [-11, 0, -5], radius: 1.3, label: 'ubuntu.com · api.stripe.com', sub: 'tên miền được phép', hidden: true },
+      { id: 'evil', kind: 'external', pos: [-11, 0, -9], radius: 1.3, label: 'c2-evil.example', sub: 'máy chủ điều khiển mã độc' },
+      { id: 'igw', kind: 'igw', pos: [-6.5, 0, -1.5], label: 'Internet Gateway' },
+      { id: 'vpc', kind: 'outline', pos: [3, 0.06, -1.5], w: 15, d: 10, r: 1.2, color: '#8C4FFF', label: 'VPC shop', sub: '10.0.0.0/16', labelPos: [5.6, 0.4, -5.4] },
+      { id: 'fwSub', kind: 'subnet', pos: [-2.3, 0, -1.5], w: 3.4, d: 8.6, color: '#fecaca', border: '#dc2626', text: 'FIREWALL SUBNET', textAt: [0, 0, 3.8], textSize: 0.3, hidden: true },
+      { id: 'pubSub', kind: 'subnet', pos: [4.6, 0, -1.5], w: 9.4, d: 8.6, color: '#bbf7d0', border: '#16a34a', text: 'PUBLIC SUBNET · 10.0.1.0/24', textAt: [0, 0, 3.8], textSize: 0.36 },
+      { id: 'netfw', kind: 'netfw', pos: [-2.3, 0, -1.2], label: 'Firewall endpoint', sub: 'AWS Network Firewall', hidden: true },
+      { id: 'web', kind: 'ec2', pos: [3, 0, -3.8], label: 'Web', sub: 'EC2 · nhận 443', small: true },
+      { id: 'app', kind: 'ec2', pos: [7.5, 0, 0.6], label: 'App', sub: 'đã nhiễm mã độc', small: true },
+      // route tables: the one on the Internet Gateway (edge association) and the public subnet's
+      { id: 'rtIgw', kind: 'token', shape: 'card', text: 'RT', color: '#4c1d95', pos: [-6.5, 0, -6], size: 1.0, label: 'Route table · IGW', sub: '10.0.1.0/24 → firewall', hidden: true },
+      { id: 'rtPub', kind: 'token', shape: 'card', text: 'RT', color: '#14532d', pos: [4.6, 0, -9.5], size: 1.0, label: 'Route table · public', sub: '0.0.0.0/0 → firewall', hidden: true },
+      // the firewall policy's rule groups
+      { id: 'rgSl', kind: 'token', shape: 'card', text: 'Stateless', fontSize: 44, color: '#7f1d1d', pos: [-6.5, 0, -10], size: 1.3, label: 'Stateless rule group', sub: 'drop 198.51.100.0/24', small: true, hidden: true },
+      { id: 'rgSf', kind: 'token', shape: 'card', text: 'Domain', fontSize: 52, color: '#991b1b', pos: [-2, 0, -10], size: 1.3, label: 'Stateful · domain list', sub: 'chỉ ubuntu.com, api.stripe.com', small: true, hidden: true },
+      { id: 'rgMg', kind: 'token', shape: 'card', text: 'IPS', fontSize: 90, color: '#b91c1c', pos: [2.5, 0, -10], size: 1.3, label: 'Managed rule group', sub: 'chữ ký tấn công · AWS cập nhật', small: true, hidden: true },
+      { id: 'cert', kind: 'acm', pos: [7, 0, -10], label: 'ACM', sub: 'chứng chỉ để giải mã TLS', small: true, hidden: true },
+      { id: 'logs', kind: 'cloudwatch', title: 'Alert / phút', pos: [11.5, 0, -5], label: 'Log firewall', sub: 'S3 · CloudWatch Logs · Firehose', hidden: true },
+      // many VPCs through one firewall: a Transit Gateway with two spoke VPCs
+      { id: 'tgw', kind: 'tgw', pos: [2.5, 0, -10], size: 1.2, label: 'Transit Gateway', hidden: true },
+      { id: 'vB', kind: 'outline', pos: [-4.5, 0.06, -10], w: 5, d: 2.8, r: 0.8, color: '#a78bfa', label: 'VPC Dev', labelPos: [0, 0.4, -1.8], hidden: true },
+      { id: 'vC', kind: 'outline', pos: [9.5, 0.06, -10], w: 5, d: 2.8, r: 0.8, color: '#a78bfa', label: 'VPC Data', labelPos: [0, 0.4, -1.8], hidden: true },
+      { id: 'aB', kind: 'ec2', pos: [-4.5, 0, -10], small: true, hidden: true },
+      { id: 'aC', kind: 'ec2', pos: [9.5, 0, -10], small: true, hidden: true },
+      // Firewall Manager in the organisation's administrator account, pushing policies to every account
+      { id: 'fms', kind: 'fms', pos: [-7, 0, -10], label: 'Firewall Manager', sub: 'tài khoản quản trị', hidden: true },
+      { id: 'acc1', kind: 'account', text: 'Shop', pos: [-2.5, 0, -10], label: 'shop-prod', small: true, hidden: true },
+      { id: 'acc2', kind: 'account', text: 'Pay', pos: [2, 0, -10], label: 'payment-prod', small: true, hidden: true },
+      { id: 'acc3', kind: 'account', text: 'Dev', pos: [6.5, 0, -10], label: 'team-dev', small: true, hidden: true },
+      { id: 'acc4', kind: 'account', text: 'New', pos: [11, 0, -10], label: 'team-ml', sub: 'tài khoản mới', small: true, hidden: true },
+      // the other firewalls, for the comparison
+      { id: 'cWaf', kind: 'waf', pos: [-2.5, 0, -10], label: 'AWS WAF', sub: 'request HTTP · lớp 7', small: true, hidden: true },
+      { id: 'cShield', kind: 'shield', pos: [2, 0, -10], label: 'AWS Shield', sub: 'DDoS', small: true, hidden: true },
+      { id: 'cDns', kind: 'dnsfw', pos: [6.5, 0, -10], label: 'DNS Firewall', sub: 'câu hỏi DNS', small: true, hidden: true },
+    ],
+    steps: [
+      {
+        key: 'why',
+        title: 'Security Group không nhìn thấy tên miền',
+        text: 'Security Group và NACL chỉ xét IP, cổng, giao thức. Máy app lỡ nhiễm mã độc gọi ra c2-evil.example qua cổng 443 — với SG, đó cũng là HTTPS như mọi request khác, nên lọt. AWS Network Firewall lọc traffic của cả VPC sâu hơn: theo tên miền, theo dấu hiệu tấn công (IPS), và ghi log từng cảnh báo.',
+        dur: 11,
+        run: [
+          at(2.4, pk('app', 'evil', { via: ['igw'], label: 'HTTPS :443 → c2-evil.example', color: BAD, speed: 6, then: [co('evil', 'lệnh từ kẻ xấu ✗', 'bad', { dy: 2.2, dur: 2.6 })] })),
+          at(3.4, co('app', 'SG: cổng 443 ra · cho qua', 'warn', { dy: 1.8, dur: 2.8 })),
+          at(7.6, co('igw', 'SG, NACL: chỉ IP · cổng', 'info', { dy: 2.4, dur: 3 })),
+        ],
+        loop: { every: 2.4, run: [pk('user', 'web', { via: ['igw'], label: 'HTTPS', size: 0.8, back: { color: OK } })] },
+      },
+      {
+        key: 'deploy',
+        title: 'Firewall endpoint và route table',
+        text: 'Network Firewall cần một subnet riêng (tối thiểu /28) ở mỗi AZ để đặt firewall endpoint. Rồi sửa route table để traffic đi qua nó: subnet public gửi 0.0.0.0/0 tới endpoint; route table gắn vào Internet Gateway (edge association) gửi traffic về subnet public qua endpoint — cả chiều vào lẫn chiều ra đều bị soi.',
+        cam: { target: [-1.5, 1, -2.5], dist: 27 },
+        hide: ['evil'],
+        show: ['fwSub', 'netfw', 'rtIgw', 'rtPub'],
+        dur: 12,
+        run: [
+          at(0.8, co('netfw', 'subnet riêng · mỗi AZ', 'info', { dy: 1.8, dur: 2.6 })),
+          at(2.6, pk('rtPub', 'netfw', { shape: 'card', label: '0.0.0.0/0 → firewall', color: '#86efac', speed: 5 })),
+          at(3.6, pk('rtIgw', 'netfw', { shape: 'card', label: '10.0.1.0/24 → firewall', color: '#c4b5fd', speed: 5 })),
+          at(6.2, co('netfw', '$0,395/giờ mỗi AZ + $0,065/GB', 'warn', { dy: 1.8, dur: 3 })),
+        ],
+        loop: {
+          start: 5,
+          every: 3,
+          run: [pk('user', 'web', { via: ['igw', 'netfw'], label: 'vào: qua firewall', size: 0.8, back: { color: OK } }), at(1.4, pk('web', 'igw', { via: ['netfw'], label: 'ra: qua firewall', color: CYAN, size: 0.8 }))],
+        },
+      },
+      {
+        key: 'stateless',
+        title: 'Rule stateless: xét từng gói, như NACL',
+        text: 'Firewall policy gom các rule group. Stateless rule group xét từng gói riêng lẻ theo thứ tự ưu tiên, giống NACL: drop ngay dải IP đã biết là xấu, pass gói chắc chắn an toàn, còn lại forward sang stateful engine để soi kỹ. Rule stateless nhanh nhưng không biết gói thuộc kết nối nào.',
+        cam: { target: [-2.5, 1, -2], dist: 28 },
+        hide: ['rtIgw', 'rtPub'],
+        show: ['rgSl', 'attacker'],
+        dur: 11,
+        run: [
+          at(0.6, pk('rgSl', 'netfw', { shape: 'card', label: 'firewall policy', color: '#fca5a5', speed: 5 })),
+          at(3, co('rgSl', 'priority 1: drop dải xấu', 'info', { dy: 1.4, dur: 2.6 })),
+          at(8, co('netfw', 'còn lại → stateful', 'info', { dy: 1.8, dur: 2.4 })),
+        ],
+        loop: {
+          start: 4,
+          every: 3,
+          run: [
+            pk('attacker', 'netfw', { via: ['igw'], label: 'từ 198.51.100.7', color: BAD, fail: 'bounce', then: [{ do: 'flash', node: 'netfw', kind: 'deny' }, co('netfw', 'stateless: drop ✗', 'bad', { dy: 1.8 })] }),
+            at(1.2, pk('user', 'web', { via: ['igw', 'netfw'], size: 0.8, back: { color: OK } })),
+          ],
+        },
+      },
+      {
+        key: 'domain',
+        title: 'Rule stateful: chỉ cho ra tên miền được phép',
+        text: 'Stateful engine (tương thích Suricata) theo dõi cả kết nối. Domain list rule group đọc tên miền trong SNI của HTTPS hay Host của HTTP: cho ra ubuntu.com và api.stripe.com, chặn mọi tên miền khác. Mã độc gọi về c2-evil.example bị chặn và ghi cảnh báo; app vẫn tải bản vá, gọi thanh toán bình thường.',
+        cam: { target: [-2.5, 1, -2], dist: 28 },
+        hide: ['attacker'],
+        show: ['rgSf', 'okSite', 'evil'],
+        dur: 12,
+        run: [
+          at(0.5, pk('rgSf', 'netfw', { shape: 'card', label: 'allow: ubuntu.com, api.stripe.com', color: '#fca5a5', speed: 5 })),
+          at(9.4, co('app', 'mã độc mất liên lạc ✓', 'good', { dy: 1.8, dur: 2.4 })),
+        ],
+        loop: {
+          start: 2.6,
+          every: 3.6,
+          run: [
+            pk('app', 'okSite', { via: ['netfw', 'igw'], label: 'SNI: api.stripe.com', color: CYAN, size: 0.8, back: { color: OK } }),
+            at(1.6, pk('app', 'netfw', { label: 'SNI: c2-evil.example', color: BAD, fail: 'bounce', then: [{ do: 'flash', node: 'netfw', kind: 'deny' }, co('netfw', 'domain list: chặn ✗', 'bad', { dy: 1.8 })] })),
+          ],
+        },
+      },
+      {
+        key: 'ips',
+        title: 'IPS: chặn theo dấu hiệu tấn công',
+        text: 'Managed rule group của AWS chứa sẵn chữ ký các kiểu tấn công đã biết — khai thác lỗ hổng, botnet, malware — và được AWS cập nhật liên tục; active threat defense thêm danh sách hạ tầng tấn công do Amazon theo dõi (thêm $0,005/GB). Mới bật thì để chế độ alert xem có chặn nhầm không, chắc rồi mới chuyển sang drop.',
+        cam: { target: [-2.5, 1, -2], dist: 28 },
+        hide: ['okSite', 'evil'],
+        show: ['rgMg', 'attacker'],
+        label: { attacker: ['Kẻ tấn công', 'IP sạch · payload khai thác'] },
+        dur: 12,
+        run: [
+          at(0.5, pk('rgMg', 'netfw', { shape: 'card', label: 'managed: threat signatures', color: '#fca5a5', speed: 5 })),
+          at(2.6, co('rgMg', 'AWS tự cập nhật chữ ký', 'info', { dy: 1.4, dur: 2.6 })),
+          at(9.4, co('web', 'không tới được web ✓', 'good', { dy: 1.8, dur: 2.4 })),
+        ],
+        loop: {
+          start: 4,
+          every: 3.4,
+          run: [
+            pk('attacker', 'netfw', { via: ['igw'], label: '${jndi:ldap://…}', color: BAD, fail: 'bounce', then: [{ do: 'flash', node: 'netfw', kind: 'deny' }, co('netfw', 'IPS: Log4Shell · drop ✗', 'bad', { dy: 1.8 })] }),
+            at(1.4, pk('user', 'web', { via: ['igw', 'netfw'], size: 0.8, back: { color: OK } })),
+          ],
+        },
+      },
+      {
+        key: 'tls',
+        advanced: true,
+        title: 'TLS inspection: soi cả traffic đã mã hoá',
+        text: 'Phần lớn traffic là HTTPS: firewall chỉ thấy tên miền, không thấy nội dung. Bật TLS inspection, firewall giải mã bằng chứng chỉ trong ACM, soi bằng các rule như trên rồi mã hoá lại. Đây là Advanced Inspection, tính thêm theo giờ ($0,380/giờ ở us-east-1, $0,872 ở Singapore) — chỉ bật cho luồng thật sự cần.',
+        cam: { target: [-1, 1, -3.5], dist: 27 },
+        hide: ['attacker'],
+        show: ['cert'],
+        dur: 12,
+        run: [
+          at(0.5, pk('cert', 'netfw', { shape: 'card', label: 'chứng chỉ', color: '#fde68a', speed: 5 })),
+          at(3, pk('user', 'netfw', { via: ['igw'], label: '🔒 HTTPS', color: REQ, speed: 6, then: [co('netfw', 'giải mã → soi → mã hoá lại', 'info', { dy: 1.8, dur: 3 }), at(1.2, pk('netfw', 'web', { label: '🔒 đã kiểm tra', color: OK, speed: 6 }))] })),
+          at(8, co('cert', 'Advanced Inspection: tính thêm', 'warn', { dy: 1.6, dur: 2.8 })),
+        ],
+      },
+      {
+        key: 'logs',
+        title: 'Log: chặn gì, lúc nào, từ đâu',
+        text: 'Network Firewall ghi ba loại log — alert (rule nào khớp, chặn hay chỉ cảnh báo), flow (mọi luồng đi qua) và TLS — gửi tới S3, CloudWatch Logs hoặc Data Firehose. Đặt alarm khi số alert tăng vọt; đưa log vào OpenSearch hay Security Lake để điều tra cùng các nguồn khác.',
+        cam: { target: [0, 1, -2.5], dist: 32 },
+        show: ['logs', 'attacker'],
+        label: { attacker: ['Kẻ tấn công', '198.51.100.7'] },
+        dur: 11,
+        run: [
+          at(0.6, co('logs', 'alert · flow · TLS', 'info', { dy: 3, dur: 2.6 })),
+          load('logs', 0.85, 5),
+          at(5.6, co('logs', 'alert tăng vọt → báo động', 'warn', { dy: 3, dur: 2.8 })),
+        ],
+        loop: {
+          every: 3,
+          run: [
+            pk('attacker', 'netfw', { via: ['igw'], color: BAD, size: 0.8, fail: 'bounce', then: [pk('netfw', 'logs', { shape: 'card', label: 'alert: drop', color: BAD, size: 0.8, speed: 8 })] }),
+            at(1.2, pk('user', 'web', { via: ['igw', 'netfw'], size: 0.8, back: { color: OK } })),
+          ],
+        },
+      },
+      {
+        key: 'central',
+        advanced: true,
+        title: 'Nhiều VPC: một firewall ở giữa',
+        text: 'Mười VPC mà mỗi VPC một firewall thì tốn kém và rule dễ lệch nhau. Cách tập trung: nối các VPC vào Transit Gateway, mọi traffic giữa các VPC và ra Internet đi qua một inspection VPC chứa firewall. Từ 2025, firewall còn gắn thẳng vào Transit Gateway được, khỏi tự dựng inspection VPC.',
+        cam: { target: [2.5, 1, -5], dist: 28 },
+        hide: ['rgSl', 'rgSf', 'rgMg', 'cert', 'logs', 'attacker', 'user'],
+        show: ['tgw', 'vB', 'vC', 'aB', 'aC'],
+        label: { vpc: ['Inspection VPC', 'firewall dùng chung'] },
+        dur: 12,
+        run: [
+          at(0.6, co('tgw', 'mọi VPC gắn vào TGW', 'info', { dy: 2.2, dur: 2.6 })),
+          at(8.4, co('netfw', '1 firewall · 1 bộ rule', 'good', { dy: 1.8, dur: 2.8 })),
+        ],
+        loop: {
+          start: 2.4,
+          every: 3.4,
+          run: [pk('aB', 'tgw', { label: 'Dev → Data', color: CYAN, size: 0.8, then: [pk('tgw', 'netfw', { color: CYAN, size: 0.8, then: [pk('netfw', 'tgw', { color: OK, size: 0.8, then: [pk('tgw', 'aC', { color: OK, size: 0.8 })] })] })] })],
+        },
+      },
+      {
+        key: 'fms',
+        title: 'Firewall Manager: một policy cho cả tổ chức',
+        text: 'Nhiều tài khoản thì ai bảo đảm VPC nào cũng có firewall, ALB nào cũng có WAF? AWS Firewall Manager, ở tài khoản quản trị của Organizations, áp policy cho mọi tài khoản: Network Firewall, WAF, Security Group, DNS Firewall, Shield Advanced. Tài khoản mới được áp ngay. Cần AWS Config; $100 mỗi policy mỗi Region một tháng.',
+        cam: { target: [2, 1, -5.5], dist: 28 },
+        hide: ['tgw', 'vB', 'vC', 'aB', 'aC'],
+        show: ['fms', 'acc1', 'acc2', 'acc3'],
+        label: { vpc: ['VPC shop', '10.0.0.0/16'] },
+        dur: 13,
+        run: [
+          at(0.6, co('fms', 'policy: Network Firewall + WAF', 'info', { dy: 2, dur: 2.6 })),
+          ...fan('fms', ['acc1', 'acc2', 'acc3'], { shape: 'card', label: 'policy', color: '#fca5a5', speed: 5 }).map((a, i) => at(2.6 + i * 0.4, a)),
+          at(5.4, co('acc2', 'tự dựng firewall, gắn WAF ✓', 'good', { dy: 1.6, dur: 2.6 })),
+          show('acc4', 8.2),
+          at(8.8, pk('fms', 'acc4', { shape: 'card', label: 'tài khoản mới → áp ngay', color: '#fca5a5', speed: 5, then: [co('acc4', 'đã có policy ✓', 'good', { dy: 1.6, dur: 2.4 })] })),
+        ],
+      },
+      {
+        key: 'compare',
+        title: 'Tường lửa nào lo phần nào?',
+        text: 'Security Group: từng máy, theo IP, cổng. NACL: cả subnet, có rule Deny. Network Firewall: cả VPC, theo tên miền, IPS, chiều vào lẫn chiều ra. AWS WAF: request HTTP tới ALB, CloudFront, API Gateway (SQL injection, XSS). Shield: DDoS. DNS Firewall: chặn ngay câu hỏi DNS. Firewall Manager áp tất cả cho nhiều tài khoản.',
+        cam: { target: [0, 1, -4], dist: 29 },
+        hide: ['fms', 'acc1', 'acc2', 'acc3', 'acc4'],
+        show: ['cWaf', 'cShield', 'cDns', 'user'],
+        dur: 12,
+        run: [
+          at(0.5, co('web', 'SG: IP · cổng', 'info', { dy: 1.8, dur: 2.4 })),
+          at(2.2, co('netfw', 'tên miền · IPS · cả VPC', 'info', { dy: 1.8, dur: 2.6 })),
+          at(4.2, co('cWaf', 'SQL injection · XSS', 'info', { dy: 1.4, dur: 2.4 })),
+          at(6, co('cShield', 'DDoS', 'info', { dy: 1.4, dur: 2.4 })),
+          at(7.8, co('cDns', 'tên miền xấu từ DNS', 'info', { dy: 1.4, dur: 2.4 })),
+        ],
+        loop: { every: 2.4, run: [pk('user', 'web', { via: ['igw', 'netfw'], size: 0.8, back: { color: OK } })] },
+      },
+    ],
+  },
+
   // ── GuardDuty ──────────────────────────────────────────────────────────────
   guardduty: {
     stage: { w: 38, d: 20 },
@@ -6511,6 +6923,8 @@ export const FLOWS = {
       { id: 'fix', kind: 'lambda', pos: [9, 0, 4.5], label: 'Lambda', sub: 'bật Block Public Access', small: true, hidden: true },
       { id: 'sns', kind: 'sns', pos: [10.5, 0, 0], label: 'SNS', sub: 'báo đội bảo mật', hidden: true },
       { id: 'ticket', kind: 'token', shape: 'card', text: 'Ticket', fontSize: 64, color: '#1d4ed8', pos: [9, 0, -4.5], size: 1.2, label: 'Ticket', sub: 'Jira · ServiceNow', hidden: true },
+      // investigating what happened after a finding: Amazon Detective
+      { id: 'det', kind: 'detective', pos: [0.5, 0, -6.5], label: 'Amazon Detective', sub: 'behavior graph · 1 năm', hidden: true },
     ],
     steps: [
       {
@@ -6630,6 +7044,21 @@ export const FLOWS = {
         ],
       },
       {
+        key: 'detective',
+        title: 'Detective: điều tra chuyện gì đã xảy ra',
+        text: 'GuardDuty báo role của EC2 web gọi API lạ từ một IP lạ — nhưng bắt đầu từ lúc nào, đã chạm tới đâu? Amazon Detective tự gom CloudTrail, VPC Flow Logs, finding GuardDuty thành behavior graph lưu tới 1 năm, rồi vẽ ra ai làm gì, từ IP nào, khác mọi ngày ra sao. Thử 30 ngày, sau đó $2 mỗi GB dữ liệu nạp vào.',
+        cam: { target: [-3, 1, -3.5], dist: 25 },
+        hide: ['eb', 'fix', 'sns', 'ticket'],
+        show: ['det'],
+        dur: 12,
+        run: [
+          at(0.5, pk('gd', 'det', { shape: 'card', label: 'finding: IP lạ dùng role EC2', color: REQ, speed: 5 })),
+          at(2.6, pk('det', 'ec2', { label: 'tra lại 30 ngày', color: CYAN, speed: 6, back: { label: 'CloudTrail · Flow Logs', color: CYAN, shape: 'card' } })),
+          at(6.2, co('det', 'bắt đầu 03:12 · 2 bucket bị đọc', 'warn', { dy: 1.8, dur: 3 })),
+          at(9.2, co('det', 'gốc rễ: tìm ra trong vài phút ✓', 'good', { dy: 1.8, dur: 2.6 })),
+        ],
+      },
+      {
         key: 'compare',
         title: 'Dịch vụ nào làm gì?',
         text: 'GuardDuty: hoạt động đáng ngờ đang diễn ra. Inspector: lỗ hổng phần mềm trên EC2, ECR, Lambda. Macie: dữ liệu nhạy cảm trong S3. Security Hub: gom finding, chấm điểm, ưu tiên rủi ro. AWS Config: cấu hình có đúng quy định. Detective: điều tra nguyên nhân sau sự cố. Đề CLF, SAA hay ghép cặp đúng như vậy.',
@@ -6638,6 +7067,7 @@ export const FLOWS = {
         dur: 12,
         run: [
           at(0.5, co('gd', 'đang bị tấn công?', 'info', { dy: 1.8, dur: 2.4 })),
+          at(1.4, co('det', 'vì sao, từ khi nào?', 'info', { dy: 1.8, dur: 2.4 })),
           at(2.3, co('insp', 'phần mềm có lỗ hổng?', 'info', { dy: 1.8, dur: 2.4 })),
           at(4.1, co('macie', 'dữ liệu nhạy cảm ở đâu?', 'info', { dy: 1.8, dur: 2.4 })),
           at(5.9, co('cfg', 'cấu hình đúng chưa?', 'info', { dy: 1.8, dur: 2.4 })),
@@ -6668,6 +7098,10 @@ export const FLOWS = {
       // AWS's side of things: its own incidents and scheduled changes, delivered through EventBridge
       { id: 'health', kind: 'health', pos: [-4, 0, -6.5], label: 'AWS Health Dashboard', sub: 'sự cố & lịch bảo trì của AWS', hidden: true },
       { id: 'hEb', kind: 'eventbridge', pos: [0.5, 0, -6.5], label: 'EventBridge', sub: 'source: aws.health', small: true, hidden: true },
+      // open-source monitoring run by AWS: Prometheus metrics from Kubernetes, Grafana dashboards
+      { id: 'k8s', kind: 'eks', pos: [12.5, 0, 6], label: 'Cụm EKS', sub: 'metric dạng Prometheus', small: true, hidden: true },
+      { id: 'prom', kind: 'prometheus', pos: [13, 0, 1], label: 'Managed Prometheus', sub: 'PromQL · giữ 150 ngày', hidden: true },
+      { id: 'graf', kind: 'grafana', pos: [11.5, 0, -5.5], label: 'Managed Grafana', sub: 'dashboard nhiều nguồn', hidden: true },
     ],
     steps: [
       {
@@ -6806,10 +7240,27 @@ export const FLOWS = {
         ],
       },
       {
+        key: 'grafana',
+        advanced: true,
+        title: 'Prometheus và Grafana do AWS vận hành',
+        text: 'Đội chạy Kubernetes đã quen Prometheus, Grafana? Amazon Managed Service for Prometheus nhận metric từ EKS và truy vấn bằng PromQL. Amazon Managed Grafana vẽ một dashboard từ cả CloudWatch, Prometheus, X-Ray; đăng nhập qua IAM Identity Center hoặc SAML, $9 mỗi editor, $5 mỗi viewer một tháng.',
+        cam: { target: [9, 1, 0], dist: 25 },
+        hide: ['canary', 'sns', 'admin', 'health', 'hEb'],
+        show: ['k8s', 'prom', 'graf'],
+        dur: 12,
+        run: [
+          at(0.6, co('prom', 'không phải tự chạy Prometheus', 'info', { dy: 1.8, dur: 2.8 })),
+          at(4, pk('cwLat', 'graf', { shape: 'card', label: 'metric CloudWatch', color: '#93c5fd', speed: 5 })),
+          at(4.8, pk('prom', 'graf', { shape: 'card', label: 'PromQL', color: '#fdba74', speed: 5 })),
+          at(7, co('graf', '1 dashboard · nhiều nguồn ✓', 'good', { dy: 3, dur: 3 })),
+        ],
+        loop: { every: 1.6, run: [pk('k8s', 'prom', { label: 'remote write', color: '#fdba74', size: 0.7, speed: 6 })] },
+      },
+      {
         title: 'Metric, log, canary — và hơn thế',
         text: 'Metric báo “có chuyện”, log cho biết “chuyện gì”, canary thử như khách thật. Composite alarm gộp nhiều alarm cho bớt báo vặt; anomaly detection tự học mức bình thường thay cho ngưỡng cố định. Theo dấu một request qua nhiều dịch vụ: tracing (X-Ray / Application Signals, OpenTelemetry).',
         cam: { target: [-1, 1, 0], dist: 32 },
-        hide: ['canary', 'sns', 'admin', 'health', 'hEb'],
+        hide: ['canary', 'sns', 'admin', 'health', 'hEb', 'k8s', 'prom', 'graf'],
         count: { crowd: 24 },
         load: { s1: 0.35, s2: 0.35, s3: 0.35, cw: 0.35, cw5: 0.05, cwLat: 0.25 },
         dur: 11,
@@ -7074,6 +7525,8 @@ export const FLOWS = {
       { id: 's3', kind: 's3', pos: [14.5, 0, -3.5], label: 'S3', sub: 'shop-assets', hidden: true },
       { id: 'logs', kind: 's3', pos: [14.5, 0, 3.5], label: 'S3', sub: 'shop-logs', hidden: true },
       { id: 'cdk', kind: 'cdk', pos: [-13.5, 0, -6.5], label: 'AWS CDK', sub: 'app.ts · TypeScript', hidden: true },
+      // approved templates handed out as products: AWS Service Catalog
+      { id: 'sc', kind: 'servicecatalog', pos: [-8.5, 0, 1.5], label: 'Service Catalog', sub: 'portfolio: team-web', hidden: true },
     ],
     steps: [
       {
@@ -7176,10 +7629,26 @@ export const FLOWS = {
         ],
       },
       {
+        key: 'catalog',
+        title: 'Service Catalog: chọn từ danh mục đã duyệt',
+        text: 'Đội dev cần môi trường mới nhưng không được quyền tạo VPC, EC2? Lan đưa template đã duyệt vào AWS Service Catalog thành product trong một portfolio. Minh chọn product, điền vài tham số; launch constraint là IAM role mà Service Catalog dùng để tạo stack — Minh chỉ cần quyền dùng Service Catalog.',
+        cam: { target: [-7.5, 1, 1], dist: 22 },
+        hide: ['cdk'],
+        show: ['sc', 'minh'],
+        label: { minh: ['Minh', 'chỉ có quyền Service Catalog'] },
+        dur: 13,
+        run: [
+          at(0.5, pk('dev', 'sc', { shape: 'card', label: 'product: web-stack v1 · đã duyệt', color: '#93c5fd', speed: 5 })),
+          at(2.4, co('sc', 'portfolio cho team-web', 'info', { dy: 2, dur: 2.6 })),
+          at(4, pk('minh', 'sc', { label: 'Launch · t3.small', color: OK, then: [co('sc', 'launch role tạo stack', 'info', { dy: 2, dur: 2.4 }), pk('sc', 'cfn', { shape: 'card', label: 'CreateStack', color: '#f9a8d4', speed: 5, then: [co('cfn', 'CREATE_COMPLETE ✓', 'good', { dy: 1.8, dur: 2.4 })] })] })),
+          at(9, pk('minh', 'sc', { label: 'Launch · m5.4xlarge', color: BAD, fail: 'bounce', then: [{ do: 'flash', node: 'sc', kind: 'deny' }, co('sc', 'template constraint: chỉ t3 ✗', 'bad', { dy: 2, dur: 2.6 })] })),
+        ],
+      },
+      {
         title: 'Xoá stack: dọn sạch',
         text: 'Xong việc với môi trường dev? Xoá stack là CloudFormation xoá mọi tài nguyên nó đã tạo, theo thứ tự ngược lại — không còn máy nào bị quên chạy ngầm tốn tiền. Tài nguyên cần giữ thì đặt DeletionPolicy: Retain (giữ nguyên) hoặc Snapshot (chụp lại rồi mới xoá).',
         cam: { target: [-0.3, 1, 0.5], dist: 34 },
-        hide: ['cdk'],
+        hide: ['cdk', 'sc', 'minh'],
         dur: 11,
         run: [
           at(0.4, pk('dev', 'cfn', { label: 'DeleteStack', color: BAD, then: [state('cfn', 'pending'), co('cfn', 'DELETE_IN_PROGRESS', 'warn', { dy: 1.8 })] })),
@@ -7220,6 +7689,9 @@ export const FLOWS = {
       { id: 'm1', kind: 'ec2', pos: [2.5, 0, -2], label: 'web-1', sub: 'SSM Agent', small: true },
       { id: 'm2', kind: 'ec2', pos: [6.5, 0, -2], label: 'web-2', sub: 'SSM Agent', small: true },
       { id: 'm3', kind: 'ec2', pos: [10.5, 0, -2], label: 'web-3', sub: 'SSM Agent', small: true },
+      // feature flags rolled out bit by bit, rolled back by an alarm: AWS AppConfig
+      { id: 'appcfg', kind: 'appconfig', pos: [-6, 0, 6.5], label: 'AWS AppConfig', sub: 'flag: new-checkout', hidden: true },
+      { id: 'alarm', kind: 'cloudwatch', title: '5xx / phút', pos: [-11.5, 0, 6.5], label: 'CloudWatch alarm', sub: '5xx sau khi bật flag', small: true, hidden: true },
     ],
     steps: [
       {
@@ -7308,6 +7780,29 @@ export const FLOWS = {
             }),
           ],
         },
+      },
+      {
+        key: 'appconfig',
+        title: 'AppConfig: bật tính năng mới từ từ',
+        text: 'Bật tính năng mới cho mọi máy cùng lúc thì lỗi là lỗi toàn bộ. AWS AppConfig (thuộc Systems Manager) đưa feature flag, cấu hình tới app dần dần theo deployment strategy, ví dụ thêm 20% mỗi 6 phút. Validator kiểm tra trước khi đưa; CloudWatch alarm kêu trong lúc triển khai là tự rollback — không phải deploy lại code.',
+        cam: { target: [-2, 1, 2], dist: 30 },
+        hide: ['param', 'kms'],
+        show: ['appcfg', 'alarm'],
+        load: { alarm: 0.15 },
+        dur: 14,
+        run: [
+          at(0.4, pk('admin', 'appcfg', { shape: 'card', label: 'new-checkout: on', color: '#93c5fd', speed: 5, then: [co('appcfg', 'validator: hợp lệ ✓', 'good', { dy: 1.8, dur: 2.2 })] })),
+          at(3, co('appcfg', 'Linear: +20% mỗi 6 phút', 'info', { dy: 1.8, dur: 2.6 })),
+          at(3.6, pk('appcfg', 'm1', { shape: 'card', label: 'flag: on', color: '#93c5fd', speed: 6, then: [{ do: 'label', node: 'm1', sub: 'new-checkout: on' }] })),
+          at(5.2, pk('appcfg', 'm2', { shape: 'card', label: 'flag: on', color: '#93c5fd', speed: 6, then: [{ do: 'label', node: 'm2', sub: 'new-checkout: on' }] })),
+          load('alarm', 0.9, 7),
+          at(7.2, co('alarm', 'ALARM: 5xx tăng', 'bad', { dy: 2.6, dur: 2.4 })),
+          at(7.8, pk('alarm', 'appcfg', { label: 'ALARM', color: BAD, speed: 6, then: [{ do: 'flash', node: 'appcfg', kind: 'deny' }, co('appcfg', 'tự rollback', 'warn', { dy: 1.8, dur: 2.4 })] })),
+          at(9.8, pk('appcfg', 'm1', { shape: 'card', label: 'flag: off', color: '#94a3b8', speed: 6, then: [{ do: 'label', node: 'm1', sub: 'SSM Agent' }] })),
+          at(10, pk('appcfg', 'm2', { shape: 'card', label: 'flag: off', color: '#94a3b8', speed: 6, then: [{ do: 'label', node: 'm2', sub: 'SSM Agent' }] })),
+          load('alarm', 0.15, 11),
+          at(11.4, co('m3', 'chưa từng nhận flag lỗi ✓', 'good', { dy: 1.6, dur: 2.4 })),
+        ],
       },
     ],
   },
@@ -7649,6 +8144,9 @@ export const FLOWS = {
       { id: 'logArc', kind: 'account', text: 'Log', pos: [-9, 0, -7.2], label: 'Log Archive', sub: 'gom log CloudTrail, Config', hidden: true },
       { id: 'audit', kind: 'account', text: 'Audit', pos: [-4.5, 0, -7.2], label: 'Audit', sub: 'đội bảo mật', hidden: true },
       { id: 'newAcct', kind: 'account', text: 'Dev C', pos: [9, 0, -7.2], label: 'team-c-dev', sub: 'Account Factory', hidden: true },
+      // one network account sharing its subnets with the others: AWS Resource Access Manager
+      { id: 'netAcct', kind: 'account', text: 'Net', pos: [-10.5, 0, 5.8], label: 'network', sub: 'chủ VPC · subnet', hidden: true },
+      { id: 'ram', kind: 'ram', pos: [-4, 0, 5.8], label: 'AWS RAM', sub: 'resource share: subnet', hidden: true },
     ],
     steps: [
       {
@@ -7755,6 +8253,22 @@ export const FLOWS = {
           at(7.6, pk('tower', 'newAcct', { shape: 'card', label: 'Account Factory', color: OK, speed: 5, then: [co('newAcct', 'sẵn log, control, SSO ✓', 'good', { dy: 1.6, dur: 3 })] })),
         ],
       },
+      {
+        key: 'ram',
+        title: 'RAM: dùng chung tài nguyên giữa các tài khoản',
+        text: 'Mỗi đội một tài khoản nhưng không muốn mỗi đội một VPC, một NAT? Tài khoản network giữ VPC và dùng AWS Resource Access Manager (RAM) chia sẻ subnet cho OU Production: shop-prod, payment-prod tự chạy EC2, RDS trong đó nhưng không sửa được VPC. Trong tổ chức không cần lời mời; RAM miễn phí.',
+        cam: { target: [-5.5, 1, 2.5], dist: 22 },
+        show: ['netAcct', 'ram'],
+        dur: 12,
+        run: [
+          at(0.5, co('netAcct', 'VPC 10.0.0.0/16 · 4 subnet', 'info', { dy: 1.6, dur: 2.6 })),
+          at(1.8, pk('netAcct', 'ram', { shape: 'card', label: 'chia sẻ subnet', color: '#93c5fd', speed: 5 })),
+          at(3.6, pk('ram', 'aShop', { shape: 'card', label: 'subnet app-a', color: '#c4b5fd', speed: 5 })),
+          at(4, pk('ram', 'aPay', { shape: 'card', label: 'subnet app-b', color: '#c4b5fd', speed: 5 })),
+          at(6.4, co('aShop', 'EC2 trong subnet được chia sẻ ✓', 'good', { dy: 1.6, dur: 2.6 })),
+          at(9, co('aPay', 'không sửa được VPC, route table', 'warn', { dy: 1.6, dur: 2.6 })),
+        ],
+      },
     ],
   },
 
@@ -7768,6 +8282,9 @@ export const FLOWS = {
       { id: 'pipe', kind: 'codepipeline', pos: [-8.5, 0, -5.5], label: 'CodePipeline', sub: 'Source → Build → Deploy' },
       { id: 'build', kind: 'codebuild', pos: [-4, 0, -5.5], label: 'CodeBuild', sub: 'buildspec.yml', hidden: true },
       { id: 'test', kind: 'token', shape: 'card', text: 'Test', fontSize: 72, color: '#0f766e', pos: [-4, 0, -1], size: 1.1, label: 'Unit test', sub: '312 test', hidden: true },
+      // a private package repository in front of the public one: CodeArtifact
+      { id: 'artifact', kind: 'codeartifact', pos: [-8.5, 0, -1], label: 'CodeArtifact', sub: 'repo shop-npm', hidden: true },
+      { id: 'npmjs', kind: 'external', pos: [-14, 0, -0.5], radius: 1.4, label: 'npmjs.com', sub: 'kho gói công khai', hidden: true },
       { id: 'ecr', kind: 'ecr', pos: [0.5, 0, -5.5], label: 'Amazon ECR', sub: 'shop-api', count: 3, hidden: true },
       { id: 'deploy', kind: 'codedeploy', pos: [5, 0, -5.5], label: 'CodeDeploy', sub: 'ECS blue/green', hidden: true },
       { id: 'crowd', kind: 'users', pos: [-1, 0, 4.5], radius: 2.6, count: 14, label: 'Người dùng', hidden: true },
@@ -7817,10 +8334,25 @@ export const FLOWS = {
         ],
       },
       {
+        key: 'codeartifact',
+        title: 'CodeArtifact: kho thư viện riêng',
+        text: 'Build nào cũng tải thư viện từ Internet: npmjs chậm hay một gói bị gỡ là build hỏng, còn gói nội bộ để đâu? AWS CodeArtifact là kho gói riêng (npm, PyPI, Maven, NuGet…): nối external connection tới npmjs, tải lần đầu rồi giữ bản sao, chứa cả gói @shop/ui của công ty. CodeBuild lấy token tạm, tối đa 12 giờ.',
+        cam: { target: [-8, 1, -3], dist: 18 },
+        show: ['artifact', 'npmjs'],
+        dur: 12,
+        run: [
+          at(0.4, pk('build', 'artifact', { label: 'npm ci', color: CYAN, speed: 5, then: [pk('artifact', 'npmjs', { label: 'lần đầu: lodash 4.17.21', color: CYAN, speed: 5, back: { label: 'giữ bản sao', color: OK, shape: 'card' } })] })),
+          at(3.8, co('artifact', 'external connection: npmjs', 'info', { dy: 1.8, dur: 2.6 })),
+          at(6, pk('artifact', 'build', { shape: 'card', label: '@shop/ui · gói nội bộ', color: '#5eead4', speed: 5 })),
+          at(8.4, pk('build', 'artifact', { label: 'npm ci · lần sau', color: CYAN, speed: 5, then: [co('artifact', 'có sẵn, không ra Internet ✓', 'good', { dy: 1.8, dur: 2.6 })] })),
+        ],
+      },
+      {
         key: 'ecr',
         title: 'Image v2 lên Amazon ECR',
         text: 'Build xong, image được gắn tag v2 và đẩy lên ECR; ECR quét lỗ hổng khi nhận image. Image là artifact bất biến: bản đã test chính là bản sẽ được deploy. Muốn rollback chỉ cần trỏ về tag cũ — không phải build lại từ đầu.',
         cam: { target: [-1.5, 1, -5], dist: 16 },
+        hide: ['artifact', 'npmjs'],
         dur: 7,
         run: [at(0.4, pk('build', 'ecr', { shape: 'cube', label: 'push shop-api:v2', color: '#fdba74', speed: 5, then: [count('ecr', 4), co('ecr', 'scan: không có lỗ hổng nghiêm trọng ✓', 'good', { dy: 1.6, dur: 2.8 })] }))],
       },
@@ -8190,6 +8722,10 @@ export const FLOWS = {
       { id: 'grp', kind: 'outline', pos: [11.75, 0.05, 0], w: 7.6, d: 10, r: 1, color: '#ED7100', fill: 0.05, label: 'Auto Scaling Group', sub: 'worker · min 2 · max 6', labelPos: [0, 0.4, 5.3], hidden: true },
       { id: 'cw', kind: 'cloudwatch', title: 'Tin đang chờ', pos: [2, 0, -6.5], label: 'CloudWatch Alarm', sub: 'số tin đang chờ', hidden: true },
       { id: 'dlq', kind: 'token', text: 'DLQ', color: '#9f1239', pos: [1.5, 0, 6], size: 1.1, label: 'Dead-letter queue', hidden: true },
+      // an app moved from the old server room that already talks to a broker over JMS: Amazon MQ
+      { id: 'jms', kind: 'ec2', pos: [-9, 0, 6.5], label: 'App chuyển lên AWS', sub: 'Java · gửi tin qua JMS', small: true, hidden: true },
+      { id: 'mq', kind: 'mq', pos: [-2, 0, 6.5], label: 'Amazon MQ', sub: 'broker ActiveMQ', hidden: true },
+      { id: 'mqW', kind: 'ec2', pos: [5, 0, 6.5], label: 'Consumer cũ', sub: 'JMS · giữ nguyên code', small: true, hidden: true },
     ],
     steps: [
       {
@@ -8313,6 +8849,28 @@ export const FLOWS = {
           at(8.2, pk('q', 'w2', { shape: 'card', label: '#77 tạo đơn', color: '#fde68a', size: 0.8, then: [count('q', 1)] })),
           at(9.4, pk('q', 'w2', { shape: 'card', label: '#77 thanh toán', color: '#fde68a', size: 0.8, then: [count('q', 0), co('w2', 'đúng thứ tự ✓', 'good', { dy: 2 })] })),
         ],
+      },
+      {
+        key: 'mq',
+        title: 'Amazon MQ: app cũ đã quen ActiveMQ, RabbitMQ',
+        text: 'App chuyển từ phòng máy cũ đang gửi tin qua Apache ActiveMQ hay RabbitMQ, bằng giao thức chuẩn JMS, AMQP, MQTT, STOMP? Đổi sang SQS là phải sửa code. Amazon MQ chạy chính broker đó cho bạn — app chỉ đổi địa chỉ kết nối; bản active/standby nằm ở hai AZ. App viết mới thì SQS, SNS vẫn gọn và rẻ hơn.',
+        cam: { target: [-2, 1, 3.5], dist: 24 },
+        hide: ['dlq'],
+        show: ['jms', 'mqW'],
+        label: { q: ['SQS queue', 'orders'] },
+        dur: 12,
+        run: [
+          at(0.4, co('jms', 'JMS · OpenWire', 'info', { dy: 1.8, dur: 2.4 })),
+          at(1.2, pk('jms', 'q', { label: 'gửi qua JMS', color: BAD, fail: 'bounce', then: [co('q', 'API khác: phải sửa code ✗', 'bad', { dy: 2.5, dur: 2.6 })] })),
+          show('mq', 3.6),
+          at(4.2, co('mq', 'ActiveMQ · RabbitMQ do AWS vận hành', 'info', { dy: 2, dur: 3 })),
+          at(8.6, co('mq', 'active/standby · 2 AZ', 'good', { dy: 2, dur: 2.8 })),
+        ],
+        loop: {
+          start: 5,
+          every: 2.6,
+          run: [pk('jms', 'mq', { shape: 'card', label: 'JMS', color: '#fde68a', then: [pk('mq', 'mqW', { shape: 'card', color: '#fde68a', then: [co('mqW', 'không sửa code ✓', 'good', { dy: 1.8 })] })] })],
+        },
       },
     ],
   },
@@ -8717,6 +9275,10 @@ export const FLOWS = {
       { id: 'fraud', kind: 'ec2', pos: [8.5, 0, 0], label: 'Phát hiện gian lận', sub: 'consumer · KCL', hidden: true },
       { id: 'fh', kind: 'firehose', pos: [8.5, 0, 5.5], label: 'Data Firehose', sub: 'gom lô → S3', hidden: true },
       { id: 's3', kind: 's3', pos: [14, 0, 5.5], label: 'S3', sub: 'kho dữ liệu', hidden: true },
+      // Apache Kafka run by AWS for teams already on Kafka: Amazon MSK
+      { id: 'kApp', kind: 'ec2', pos: [-9, 0, 6.5], label: 'App đang dùng Kafka', sub: 'Kafka producer', small: true, hidden: true },
+      { id: 'msk', kind: 'msk', pos: [-2, 0, 6.5], label: 'Amazon MSK', sub: 'topic clickstream', hidden: true },
+      { id: 'kCons', kind: 'ec2', pos: [4.5, 0, 6.5], label: 'Consumer', sub: 'Kafka consumer group', small: true, hidden: true },
     ],
     steps: [
       {
@@ -8842,6 +9404,21 @@ export const FLOWS = {
           ],
         },
       },
+      {
+        key: 'msk',
+        title: 'Amazon MSK: Apache Kafka do AWS vận hành',
+        text: 'Đội đã quen Apache Kafka, cần connector của hệ sinh thái Kafka? Amazon MSK chạy cụm Kafka cho bạn: broker trải nhiều AZ, hỏng thì tự thay, app giữ nguyên Kafka API; có cả MSK Serverless, MSK Connect. Kinesis gọn và gắn sẵn với AWS; MSK khi cần đúng Kafka. Broker nhỏ nhất $0,0456/giờ.',
+        cam: { target: [-1, 1, 3.5], dist: 26 },
+        show: ['kApp', 'msk', 'kCons'],
+        dur: 11,
+        run: [
+          at(0.5, co('kApp', 'Kafka API · giữ nguyên code', 'info', { dy: 1.8, dur: 2.6 })),
+          at(3, co('msk', 'broker trải nhiều AZ · tự thay khi hỏng', 'info', { dy: 2, dur: 2.8 })),
+          at(6.4, co('msk', 'Serverless · MSK Connect', 'info', { dy: 2, dur: 2.6 })),
+          at(8.6, co('kCons', 'đọc lại theo offset ✓', 'good', { dy: 1.8, dur: 2.4 })),
+        ],
+        loop: { every: 1.4, run: [pk('kApp', 'msk', { size: 0.6, color: REQ }), at(0.6, pk('msk', 'kCons', { size: 0.6, color: REQ }))] },
+      },
     ],
   },
 
@@ -8863,6 +9440,9 @@ export const FLOWS = {
       { id: 'etl', kind: 'glue', pos: [-0.5, 0, 1.2], label: 'Glue ETL job', sub: 'Spark serverless', hidden: true },
       { id: 'athena', kind: 'athena', pos: [5.5, 0, 1.2], label: 'Athena', sub: 'SQL trên S3', hidden: true },
       { id: 'analyst', kind: 'user', pos: [11.5, 0, 2.6], label: 'Nhà phân tích', hidden: true },
+      // a Spark / Hive cluster of your own over the same lake: Amazon EMR
+      { id: 'emr', kind: 'emr', pos: [1, 0, 6.8], label: 'Amazon EMR', sub: 'cụm Spark · Hive · Trino', hidden: true },
+      { id: 'spotN', kind: 'ec2', pos: [6, 0, 6.8], label: 'Task node', sub: 'Spot', small: true, hidden: true },
       {
         id: 'bill',
         kind: 'board',
@@ -9018,6 +9598,21 @@ export const FLOWS = {
             at(1.8, pk('athena', 'analyst', { shape: 'card', color: OK, speed: 6 })),
           ],
         },
+      },
+      {
+        key: 'emr',
+        title: 'EMR: cụm Spark, Hive của riêng bạn',
+        text: 'Cần toàn quyền với cụm — chọn bản Spark, Hive, Trino, Flink, cài thêm thư viện, chạy job lớn mỗi ngày cho rẻ? Amazon EMR dựng cụm: node primary điều phối, core giữ HDFS, task chỉ tính toán nên hợp Spot; dữ liệu bền vẫn ở S3. Không muốn quản cụm thì dùng EMR Serverless. Giá: phí EMR cộng giá EC2.',
+        cam: { target: [-1, 1, 3.5], dist: 24 },
+        show: ['emr', 'spotN'],
+        dur: 12,
+        run: [
+          at(0.5, pk('lake', 'emr', { label: 'đọc s3://shop-lake/', color: CYAN, speed: 5 })),
+          at(2.6, co('emr', 'primary · core · task', 'info', { dy: 2, dur: 2.6 })),
+          at(4.6, pk('emr', 'spotN', { label: 'chia việc Spark', color: '#fdba74', speed: 6, back: { color: OK } })),
+          at(6.6, co('spotN', 'task node: dùng Spot cho rẻ', 'good', { dy: 1.8, dur: 2.6 })),
+          at(9, pk('emr', 'lake', { shape: 'card', label: 'kết quả · Parquet', color: OK, speed: 5 })),
+        ],
       },
     ],
   },
