@@ -767,6 +767,11 @@ p {
   gap: 6px;
 }
 
+.step-link {
+  margin-left: 8px;
+  gap: 6px;
+}
+
 /* ── explore: service info ──────────────────────────────────────────────── */
 .svc-info section {
   margin-top: 16px;
@@ -913,8 +918,9 @@ p {
 
 .stepper-top {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 6px 12px;
   margin-bottom: 6px;
 }
 
@@ -925,10 +931,11 @@ p {
   white-space: nowrap;
 }
 
+/* the toggles drop to a line of their own rather than squeezing the dots */
 .dots {
   display: flex;
   gap: 6px;
-  flex: 1;
+  flex: 1 1 160px;
   flex-wrap: wrap;
 }
 
@@ -949,6 +956,41 @@ p {
 .dot-btn.is-on {
   width: 34px;
   background: var(--accent);
+}
+
+/* advanced steps: amber dots, faded while they are skipped */
+.dot-btn.is-adv {
+  background: rgba(245, 158, 11, 0.45);
+}
+
+.dot-btn.is-adv.is-done {
+  background: rgba(245, 158, 11, 0.75);
+}
+
+.dot-btn.is-adv.is-on {
+  background: var(--warn);
+}
+
+.dot-btn.is-skipped {
+  width: 12px;
+  background: rgba(245, 158, 11, 0.22);
+}
+
+.adv-tag {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+  padding: 0 7px;
+  border-radius: 999px;
+  vertical-align: 2px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 18px;
+  letter-spacing: 0.02em;
+  color: #fcd34d;
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.4);
+  white-space: nowrap;
 }
 
 .auto {

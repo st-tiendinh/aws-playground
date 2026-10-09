@@ -159,6 +159,13 @@ const GLYPH = {
       <path d="M18 13.5l.9 2.3 2.3.9-2.3.9-.9 2.3-.9-2.3-2.3-.9 2.3-.9z" />
     </>
   ),
+  // generative AI: foundation layers with a spark on top
+  bedrock: (
+    <>
+      <path d="M3 17.5l9 4 9-4M3 13.5l9 4 9-4" />
+      <path d="M12 2.5l1.4 3.6 3.6 1.4-3.6 1.4L12 12.5l-1.4-3.6L7 7.5l3.6-1.4z" />
+    </>
+  ),
   sagemaker: (
     <>
       <circle cx="5" cy="6" r="1.8" />
@@ -398,6 +405,27 @@ const GLYPH = {
       <path d="M13.3 13.3l2.5 2.5" />
     </>
   ),
+  // weak spots: a shield gathering findings (Security Hub), a magnifier on a flaw (Inspector),
+  // an eye on the data (Macie)
+  securityhub: (
+    <>
+      <path d="M12 3l7 3v5.5c0 4.3-3 7.8-7 9.5-4-1.7-7-5.2-7-9.5V6z" />
+      <circle cx="12" cy="11.5" r="1.6" />
+      <path d="M12 9.9V7.5M10.6 12.4l-2.1 1.3M13.4 12.4l2.1 1.3" />
+    </>
+  ),
+  inspector: (
+    <>
+      <circle cx="10.5" cy="10.5" r="6" />
+      <path d="M15 15l5.5 5.5M10.5 7.5v3.5M10.5 13.4v.1" />
+    </>
+  ),
+  macie: (
+    <>
+      <path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z" />
+      <circle cx="12" cy="12" r="2.6" />
+    </>
+  ),
   cloudwatch: (
     <>
       <rect x="3" y="4" width="18" height="13" rx="2" />
@@ -464,6 +492,13 @@ const GLYPH = {
       <path d="M3.5 10h3l8-4.5v13l-8-4.5h-3z" />
       <path d="M7 14.5l1 4.5h2.2l-.8-3.5" />
       <path d="M17.5 9.5a3.5 3.5 0 0 1 0 5M19.8 7a7 7 0 0 1 0 10" />
+    </>
+  ),
+  // e-mail going out
+  ses: (
+    <>
+      <rect x="3" y="5" width="15" height="11" rx="1.5" />
+      <path d="M3.5 6l7 5.5 7-5.5M14.5 19.5h6.5M18.5 17l2.5 2.5-2.5 2.5" />
     </>
   ),
   eventbridge: (
@@ -595,7 +630,7 @@ export function Glyph({ name, size = 18, stroke = 1.8 }) {
 }
 
 // model kinds without a lesson of their own take the colour of the lesson that explains them
-const KIND_TO_SERVICE = { root: 'firstaccount', mfa: 'firstaccount', amplify: 'lightsail', rekognition: 'aiservices', textract: 'aiservices', transcribe: 'aiservices', comprehend: 'aiservices', translate: 'aiservices', polly: 'aiservices', lex: 'aiservices', notebook: 'sagemaker', mlmodel: 'sagemaker', endpoint: 'sagemaker', bedrock: 'sagemaker', amazonq: 'sagemaker', agent: 'migrate', dsagent: 'datatransfer', staging: 'migrate', mgn: 'migrate', sct: 'dms', datasync: 'datatransfer', transfer: 'datatransfer', snowball: 'datatransfer', tape: 'storagegateway', docdb: 'purposedb', neptune: 'purposedb', keyspaces: 'purposedb', memorydb: 'purposedb', timestream: 'purposedb', onprem: 'cloud', server: 'cloud', localzone: 'foundation', wavelength: 'foundation', tower: 'foundation', outposts: 'foundation', pricing: 'budgets', cur: 'budgets', firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
+const KIND_TO_SERVICE = { root: 'firstaccount', mfa: 'firstaccount', amplify: 'lightsail', rekognition: 'aiservices', textract: 'aiservices', transcribe: 'aiservices', comprehend: 'aiservices', translate: 'aiservices', polly: 'aiservices', lex: 'aiservices', notebook: 'sagemaker', mlmodel: 'sagemaker', endpoint: 'sagemaker', amazonq: 'sagemaker', kb: 'bedrock', guardrail: 'bedrock', agentcore: 'bedrock', inspector: 'securityhub', macie: 'securityhub', sts: 'iam', health: 'cloudwatch', quotas: 'trustedadvisor', optimizer: 'budgets', controltower: 'organizations', cdk: 'cloudformation', rdsproxy: 'rds', clientvpn: 'vpn', agent: 'migrate', dsagent: 'datatransfer', staging: 'migrate', mgn: 'migrate', sct: 'dms', datasync: 'datatransfer', transfer: 'datatransfer', snowball: 'datatransfer', tape: 'storagegateway', docdb: 'purposedb', neptune: 'purposedb', keyspaces: 'purposedb', memorydb: 'purposedb', timestream: 'purposedb', onprem: 'cloud', server: 'cloud', localzone: 'foundation', wavelength: 'foundation', tower: 'foundation', outposts: 'foundation', pricing: 'budgets', cur: 'budgets', firehose: 'kinesis', glue: 'athena', catalog: 'athena', lakeformation: 'athena', table: 'athena', board: 'athena', quicksight: 'redshift', osdash: 'opensearch', pcx: 'vpc', vgw: 'vpn', cgw: 'vpn', dx: 'vpn', drs: 'dr', ga: 'dr', pod: 'eks', codebuild: 'codepipeline', codedeploy: 'codepipeline', edge: 'cloudfront', az: 'foundation', zone: 'foundation', globe: 'foundation', region: 'foundation', igw: 'vpc', subnet: 'vpc', vpc: 'vpc', nat: 'vpc', sg: 'vpc', nacl: 'vpc', vpce: 'vpc', eni: 'vpc' };
 const SPECIAL = { users: ['#0ea5e9', 'users'], user: ['#0ea5e9', 'users'], external: ['#0891b2', 'foundation'] };
 
 export function ServiceIcon({ id, size = 34, glyph }) {

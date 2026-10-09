@@ -97,16 +97,18 @@ export function createEngine({ host, ui, simStore }) {
     rig,
     sfx,
     onStep: (s) => {
-      ui.set({ step: s.index, stepCount: s.count, playing: s.playing, flowDone: !!s.done });
-      // reaching the last step counts the lesson as learnt (ticks it on the beginner path)
+      ui.set({ step: s.index, stepCount: s.count, stepLast: !!s.last, playing: s.playing, flowDone: !!s.done });
+      // reaching the last step counts the lesson as learnt (ticks it on the beginner path) — the
+      // last basic one when advanced steps are skipped
       const { serviceId, done } = ui.get();
-      if (s.count && s.index === s.count - 1 && !done.includes(serviceId)) {
+      if (s.count && s.last && !done.includes(serviceId)) {
         const next = [...done, serviceId];
         writePref('done', next);
         ui.set({ done: next });
       }
     },
   });
+  explore.skipAdvanced = ui.get().skipAdvanced;
   scene.add(explore.root);
 
   // ── post-processing ──
@@ -280,6 +282,11 @@ export function createEngine({ host, ui, simStore }) {
     setAutoAdvance: (v) => (explore.autoAdvance = v),
     get autoAdvance() {
       return explore.autoAdvance;
+    },
+    setSkipAdvanced(v) {
+      writePref('skipAdvanced', v);
+      ui.set({ skipAdvanced: v });
+      explore.setSkipAdvanced(v);
     },
     get progress() {
       return explore.progress;

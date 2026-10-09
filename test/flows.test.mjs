@@ -7,9 +7,9 @@ import * as catalogue from '../src/data/services.js';
 const { SERVICES } = catalogue;
 const SANDBOX_ACTIONS = new Set([null, 'quake', 'serverFail', 'spike', 'dbFail', 'ddos', 'sqlInjection', 'paymentDown', 'dataDelete', 'leakedKey', 'badDeploy', 'regionDown', 'report']);
 
-const KINDS = new Set(['ec2', 'elb', 's3', 'rds', 'dynamodb', 'lambda', 'apigw', 'igw', 'nat', 'external', 'cloudfront', 'edge', 'route53', 'users', 'user', 'az', 'zone', 'region', 'outline', 'subnet', 'globe', 'token', 'cloudwatch', 'sqs', 'iam', 'sns', 'cache', 'waf', 'shield', 'ecs', 'secrets', 'cognito', 'ebs', 'snapshot', 'kms', 'cloudtrail', 'eventbridge', 'cloudformation', 'budgets', 'costexplorer', 'acm', 'stepfunctions', 'efs', 'mount', 'ecr', 'aurora', 'resp', 'vpce', 'eni', 'sg', 'nacl', 'org', 'account', 'ou', 'scp', 'kinesis', 'firehose', 'ssm', 'param', 'backup', 'idc', 'permset', 'guardduty', 'finding', 'config', 'rule', 'advisor', 'miner', 'eks', 'pod', 'beanstalk', 'codepipeline', 'codebuild', 'codedeploy', 'xray', 'pcx', 'tgw', 'vgw', 'cgw', 'dx', 'drs', 'ga', 'athena', 'glue', 'catalog', 'lakeformation', 'table', 'board', 'redshift', 'quicksight', 'osdash', 'opensearch', 'onprem', 'server', 'localzone', 'wavelength', 'tower', 'outposts', 'pricing', 'cur', 'fsx', 'storagegateway', 'tape', 'docdb', 'neptune', 'keyspaces', 'memorydb', 'timestream', 'mgn', 'agent', 'dsagent', 'staging', 'dms', 'sct', 'datasync', 'transfer', 'snowball', 'rekognition', 'textract', 'transcribe', 'comprehend', 'translate', 'polly', 'lex', 'sagemaker', 'notebook', 'mlmodel', 'endpoint', 'bedrock', 'amazonq', 'root', 'mfa', 'lightsail', 'amplify']);
+const KINDS = new Set(['ec2', 'elb', 's3', 'rds', 'dynamodb', 'lambda', 'apigw', 'igw', 'nat', 'external', 'cloudfront', 'edge', 'route53', 'users', 'user', 'az', 'zone', 'region', 'outline', 'subnet', 'globe', 'token', 'cloudwatch', 'sqs', 'iam', 'sns', 'cache', 'waf', 'shield', 'ecs', 'secrets', 'cognito', 'ebs', 'snapshot', 'kms', 'cloudtrail', 'eventbridge', 'cloudformation', 'budgets', 'costexplorer', 'acm', 'stepfunctions', 'efs', 'mount', 'ecr', 'aurora', 'resp', 'vpce', 'eni', 'sg', 'nacl', 'org', 'account', 'ou', 'scp', 'kinesis', 'firehose', 'ssm', 'param', 'backup', 'idc', 'permset', 'guardduty', 'finding', 'config', 'rule', 'advisor', 'miner', 'eks', 'pod', 'beanstalk', 'codepipeline', 'codebuild', 'codedeploy', 'xray', 'pcx', 'tgw', 'vgw', 'cgw', 'dx', 'drs', 'ga', 'athena', 'glue', 'catalog', 'lakeformation', 'table', 'board', 'redshift', 'quicksight', 'osdash', 'opensearch', 'onprem', 'server', 'localzone', 'wavelength', 'tower', 'outposts', 'pricing', 'cur', 'fsx', 'storagegateway', 'tape', 'docdb', 'neptune', 'keyspaces', 'memorydb', 'timestream', 'mgn', 'agent', 'dsagent', 'staging', 'dms', 'sct', 'datasync', 'transfer', 'snowball', 'rekognition', 'textract', 'transcribe', 'comprehend', 'translate', 'polly', 'lex', 'sagemaker', 'notebook', 'mlmodel', 'endpoint', 'bedrock', 'amazonq', 'root', 'mfa', 'lightsail', 'amplify', 'ses', 'kb', 'guardrail', 'agentcore', 'inspector', 'macie', 'securityhub', 'sts', 'health', 'quotas', 'optimizer', 'controltower', 'cdk', 'rdsproxy', 'clientvpn']);
 const ACTIONS = new Set(['packet', 'stream', 'pulse', 'callout', 'beam', 'break', 'fix', 'quake', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count', 'flash', 'focus', 'shake', 'sound']);
-const STEP_KEYS = new Set(['key', 'title', 'text', 'dur', 'cam', 'run', 'loop', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count']);
+const STEP_KEYS = new Set(['key', 'advanced', 'link', 'title', 'text', 'dur', 'cam', 'run', 'loop', 'show', 'hide', 'state', 'ghost', 'label', 'load', 'count']);
 
 const errors = [];
 const err = (where, msg) => errors.push(`${where}: ${msg}`);
@@ -42,7 +42,12 @@ for (const [id, flow] of Object.entries(FLOWS)) {
     if (st.cam?.node && !ids.has(st.cam.node)) err(where, `cam.node → unknown node "${st.cam.node}"`);
     checkActions(st.run, ids, where);
     checkActions(st.loop?.run, ids, where + ' loop');
+    // a step that hands over to a lesson of its own (Bedrock inside SageMaker AI…)
+    if (st.link != null && (st.link === id || !FLOWS[st.link])) err(where, `link → no other lesson "${st.link}"`);
   });
+  // advanced steps can be skipped, so a lesson must open on a basic one
+  if (flow.steps.some((st) => st.advanced != null && typeof st.advanced !== 'boolean')) err(id, 'step advanced must be true or false');
+  if (flow.steps[0]?.advanced) err(id, 'the first step cannot be advanced');
   const keys = flow.steps.map((st) => st.key).filter((k) => k != null);
   if (keys.some((k) => typeof k !== 'string' || !k)) err(id, 'step key must be a non-empty string');
   if (new Set(keys).size !== keys.length) err(id, 'duplicate step keys');
