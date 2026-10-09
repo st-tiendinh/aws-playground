@@ -266,6 +266,16 @@ const FACTORY = {
   batch: (o) => new TokenModel({ kind: 'batch', category: 'compute', color: '#ea580c', shape: 'cube', text: 'Batch', fontSize: 68, glow: true, size: 1.4, ...o }),
   emr: (o) => new TokenModel({ kind: 'emr', category: 'analytics', color: '#8f6d07', shape: 'cube', text: 'EMR', fontSize: 92, glow: true, size: 1.4, ...o }),
   msk: (o) => new TokenModel({ kind: 'msk', category: 'analytics', color: '#a87e06', shape: 'cube', text: 'MSK', fontSize: 92, glow: true, size: 1.4, ...o }),
+  // package C: a cache in front of DynamoDB (DAX), the IPv6 way out of a private subnet
+  // (egress-only Internet Gateway), and the services the CLF exam only asks you to recognise: a
+  // cloud contact centre, desktops and apps streamed from AWS, IoT devices, license tracking
+  dax: (o) => new TokenModel({ kind: 'dax', category: 'database', color: '#a21caf', shape: 'disc', text: 'DAX', fontSize: 96, glow: true, size: 1.3, bob: 0.03, ...o }),
+  eigw: (o) => new GateModel({ kind: 'eigw', category: 'network', color: '#0d9488', dark: '#134e4a', scale: 0.85, ...o }),
+  connect: (o) => new TokenModel({ kind: 'connect', category: 'integration', color: '#be185d', shape: 'cube', text: 'Connect', fontSize: 50, glow: true, size: 1.4, ...o }),
+  workspaces: (o) => new TokenModel({ kind: 'workspaces', category: 'compute', color: '#0369a1', shape: 'cube', text: 'WorkSpaces', fontSize: 36, glow: true, size: 1.4, ...o }),
+  appstream: (o) => new TokenModel({ kind: 'appstream', category: 'compute', color: '#0e7490', shape: 'cube', text: 'AppStream', fontSize: 38, glow: true, size: 1.4, ...o }),
+  iotcore: (o) => new TokenModel({ kind: 'iotcore', category: 'integration', color: '#15803d', shape: 'cube', text: 'IoT Core', fontSize: 46, glow: true, size: 1.4, ...o }),
+  licensemanager: (o) => new TokenModel({ kind: 'licensemanager', category: 'management', color: '#1e40af', shape: 'cube', text: 'License', fontSize: 50, glow: true, size: 1.4, ...o }),
 };
 
 // flat platforms (AZ, Region, data centres…): zone-style labels, no hover glow, smoke when destroyed
